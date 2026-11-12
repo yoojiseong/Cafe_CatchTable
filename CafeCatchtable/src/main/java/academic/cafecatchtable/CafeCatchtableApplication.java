@@ -10,5 +10,5 @@ public class CafeCatchtableApplication {
         SpringApplication.run(CafeCatchtableApplication.class, args);
     }
     // 안녕하세요.
-
+    // 지성입니다.
 }
