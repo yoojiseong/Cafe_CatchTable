@@ -9,5 +9,6 @@ public class CafeCatchtableApplication {
     public static void main(String[] args) {
         SpringApplication.run(CafeCatchtableApplication.class, args);
     }
+    // 안녕하세요.
 
 }
