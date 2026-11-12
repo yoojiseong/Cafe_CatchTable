@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<!-- FR-21 통계 · O-01 GET /owner/cafes, O-12 GET /owner/cafes/{cafeId}/stats?from=&to= (SP_ZONE_STATS) -->
+<html lang="ko" xmlns:th="http://www.thymeleaf.org">
+<head th:replace="~{fragments/layout :: head('통계')}"></head>
+<body data-auth="owner">
+<header th:replace="~{fragments/layout :: header}"></header>
+
+<main class="container">
+  <div class="page-head">
+    <div>
+      <h1>통계</h1>
+      <p>기간별 구역 점유율·회전율·평균 체류시간·노쇼율과 인기 좌석</p>
+    </div>
+  </div>
+
+  <section class="card" style="margin-bottom:20px">
+    <form id="filterForm" class="form-grid">
+      <div class="field"><label for="cafeId">카페</label><select id="cafeId" name="cafeId"></select></div>
+      <div class="field"><label for="from">시작일</label><input type="date" id="from" name="from" required></div>
+      <div class="field"><label for="to">종료일</label><input type="date" id="to" name="to" required></div>
+      <div class="row">
+        <button type="button" class="btn btn--ghost btn--sm" data-range="7">7일</button>
+        <button type="button" class="btn btn--ghost btn--sm" data-range="30">30일</button>
+        <button type="submit" class="btn">조회</button>
+      </div>
+    </form>
+  </section>
+
+  <div id="statsArea" class="stack"></div>
+</main>
+
+<script th:inline="none">
+App.page(async function () {
+  const esc = App.esc;
+  const form = document.getElementById('filterForm');
+  const area = document.getElementById('statsArea');
+
+  const cafes = await App.api('/owner/cafes') || [];
+  if (!cafes.length) {
+    document.querySelector('main').innerHTML =
+      '<div class="empty">등록된 카페가 없습니다. <a href="/owner/cafes">매장 관리</a>에서 카페를 먼저 등록하세요.</div>';
+    return;
+  }
+  form.cafeId.innerHTML = cafes.map(function (c) {
+    return '<option value="' + esc(c.cafeId) + '">' + esc(c.cafeName) + '</option>';
+  }).join('');
+  if (App.query('cafeId')) form.cafeId.value = App.query('cafeId');
+
+  function setRange(days) {
+    const today = new Date();
+    form.to.value = App.toApiDate(today);
+    form.from.value = App.toApiDate(App.addDays(today, -(days - 1)));
+  }
+  setRange(7);
+
+  /** 비율 값: 0~1 이면 ×100, 이미 백분율이면 그대로 */
+  function pct(v) {
+    if (v == null || isNaN(v)) return null;
+    v = Number(v);
+    return v <= 1 ? v * 100 : v;
+  }
+  function pctText(v) { const p = pct(v); return p == null ? '-' : p.toFixed(1) + '%'; }
+  function num(v, digits) { return v == null || isNaN(v) ? '-' : Number(v).toFixed(digits || 0); }
+  function bar(v, danger) {
+    const p = pct(v);
+    return '<div class="bar-cell"><div class="bar' + (danger ? ' bar--danger' : '') + '"><i style="width:' + Math.min(100, p || 0) + '%"></i></div>' +
+      '<span class="num">' + pctText(v) + '</span></div>';
+  }
+  /** SP_ZONE_STATS 커서 열(대문자) / camelCase 모두 허용 */
+  function pick(o, camel, upper) { return o[camel] != null ? o[camel] : o[upper]; }
+
+  async function load() {
+    if (form.from.value > form.to.value) { App.toast('시작일이 종료일보다 늦습니다', 'error'); return; }
+    area.innerHTML = '<p class="muted">불러오는 중…</p>';
+    const data = await App.api('/owner/cafes/' + encodeURIComponent(form.cafeId.value) + '/stats',
+      { query: { from: form.from.value, to: form.to.value } });
+
+    const zones = (Array.isArray(data) ? data : (data && (data.zones || data.zoneStats)) || []).map(function (z) {
+      return {
+        zoneName: pick(z, 'zoneName', 'ZONE_NAME'),
+        resvCount: pick(z, 'resvCount', 'RESV_COUNT') || 0,
+        avgStayMin: pick(z, 'avgStayMin', 'AVG_STAY_MIN'),
+        occupancyRate: pick(z, 'occupancyRate', 'OCCUPANCY_RATE'),
+        turnover: pick(z, 'turnover', 'TURNOVER'),
+        noshowRate: pick(z, 'noshowRate', 'NOSHOW_RATE')
+      };
+    });
+    const top = (data && !Array.isArray(data) && (data.topSeats || data.popularSeats)) || [];
+
+    if (!zones.length && !top.length) {
+      area.innerHTML = '<div class="empty">선택한 기간에 통계 데이터가 없습니다.</div>';
+      return;
+    }
+
+    // 요약 지표: 예약 수 합계, 예약 수로 가중한 평균
+    const totalResv = zones.reduce(function (s, z) { return s + Number(z.resvCount); }, 0);
+    function weighted(key) {
+      const rows = zones.filter(function (z) { return z[key] != null; });
+      if (!rows.length) return null;
+      const w = rows.reduce(function (s, z) { return s + Number(z.resvCount); }, 0);
+      if (!w) return rows.reduce(function (s, z) { return s + Number(z[key]); }, 0) / rows.length;
+      return rows.reduce(function (s, z) { return s + Number(z[key]) * Number(z.resvCount); }, 0) / w;
+    }
+    const avgStay = weighted('avgStayMin');
+
+    area.innerHTML =
+      '<div class="kpis">' +
+        kpi('총 예약 수', totalResv.toLocaleString() + '건') +
+        kpi('평균 점유율', pctText(weighted('occupancyRate'))) +
+        kpi('평균 체류시간', avgStay == null ? '-' : App.fmtMinutes(avgStay)) +
+        kpi('노쇼율', pctText(weighted('noshowRate'))) +
+      '</div>' +
+      '<section class="card"><div class="card__head"><h2>구역별 통계</h2>' +
+        '<span class="muted small">' + esc(App.fmtDate(form.from.value)) + ' ~ ' + esc(App.fmtDate(form.to.value)) + '</span></div>' +
+        '<div class="scroll-x"><table class="table"><thead><tr>' +
+          '<th>구역</th><th class="num">예약 수</th><th>점유율</th><th class="num">회전율</th><th class="num">평균 체류</th><th>노쇼율</th>' +
+        '</tr></thead><tbody>' +
+        zones.map(function (z) {
+          return '<tr><td><b>' + esc(z.zoneName) + '</b></td>' +
+            '<td class="num">' + num(z.resvCount) + '</td>' +
+            '<td>' + bar(z.occupancyRate) + '</td>' +
+            '<td class="num">' + num(z.turnover, 2) + '회</td>' +
+            '<td class="num">' + (z.avgStayMin == null ? '-' : App.fmtMinutes(z.avgStayMin)) + '</td>' +
+            '<td>' + bar(z.noshowRate, true) + '</td></tr>';
+        }).join('') +
+        '</tbody></table></div>' +
+        '<p class="muted small" style="margin:10px 0 0">회전율 = 이용완료 예약 수 ÷ 구역 좌석 수 · 점유율 = 예약된 좌석-시간 ÷ (좌석 수 × 영업시간)</p>' +
+      '</section>' +
+      '<section class="card"><div class="card__head"><h2>인기 좌석 TOP 3</h2></div>' +
+        (top.length ? '<ol class="rank">' + top.slice(0, 3).map(function (s, i) {
+          const seatNum = pick(s, 'seatNum', 'SEAT_NUM');
+          const zoneName = pick(s, 'zoneName', 'ZONE_NAME');
+          const cnt = pick(s, 'resvCount', 'RESV_COUNT');
+          return '<li><span class="rank__no">' + (i + 1) + '</span>' +
+            '<span><b>' + esc(seatNum) + '</b> <span class="muted small">' + esc(zoneName || '') + '</span></span>' +
+            '<span class="num"><b>' + num(cnt) + '</b>건</span></li>';
+        }).join('') + '</ol>' : '<p class="muted">데이터가 없습니다.</p>') +
+      '</section>';
+  }
+
+  function kpi(label, value) {
+    return '<div class="card kpi"><div class="kpi__label">' + esc(label) + '</div><div class="kpi__value">' + esc(value) + '</div></div>';
+  }
+
+  form.addEventListener('submit', function (ev) { ev.preventDefault(); load().catch(App.handleError); });
+  form.cafeId.addEventListener('change', function () { load().catch(App.handleError); });
+  form.querySelectorAll('[data-range]').forEach(function (b) {
+    b.addEventListener('click', function () { setRange(+b.dataset.range); load().catch(App.handleError); });
+  });
+
+  await load();
+});
+</script>
+</body>
+</html>

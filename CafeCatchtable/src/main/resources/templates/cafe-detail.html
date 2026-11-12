@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<!-- FR-09 조건별 좌석 조회 · FR-10 실시간 좌석 상태
+     C-02 GET /cafes/{cafeId}, C-03 GET /cafes/{cafeId}/seats -->
+<html lang="ko" xmlns:th="http://www.thymeleaf.org">
+<head th:replace="~{fragments/layout :: head('좌석 배치도')}"></head>
+<body>
+<header th:replace="~{fragments/layout :: header}"></header>
+
+<main class="container">
+  <p class="small"><a href="/cafes">← 카페 목록</a></p>
+
+  <section class="card" id="cafeInfo" style="margin-bottom:20px">
+    <p class="muted">불러오는 중…</p>
+  </section>
+
+  <section class="card" style="margin-bottom:20px">
+    <form id="filterForm" class="form-grid">
+      <div class="field">
+        <label for="zoneId">구역</label>
+        <select id="zoneId" name="zoneId"><option value="">전체 구역</option></select>
+      </div>
+      <div class="field">
+        <label for="seatType">좌석 타입</label>
+        <input type="text" id="seatType" name="seatType" list="seatTypeList" placeholder="예: 1인석">
+        <datalist id="seatTypeList"></datalist>
+      </div>
+      <div class="field">
+        <label for="extraItem">별도품목</label>
+        <input type="text" id="extraItem" name="extraItem" placeholder="예: 콘센트">
+      </div>
+      <div class="field">
+        <label for="visitors">인원</label>
+        <input type="number" id="visitors" name="visitors" min="1" max="20" placeholder="명">
+      </div>
+      <div class="row">
+        <button type="submit" class="btn">조회</button>
+        <button type="button" class="btn btn--ghost" id="resetBtn">초기화</button>
+      </div>
+    </form>
+  </section>
+
+  <div class="card__head">
+    <div class="legend" aria-label="좌석 상태 범례">
+      <span><i style="background:var(--st-free)"></i>빈자리 <b id="cntFree">0</b></span>
+      <span><i style="background:var(--st-booked)"></i>예약됨 <b id="cntBooked">0</b></span>
+      <span><i style="background:var(--st-inuse)"></i>이용중 <b id="cntInuse">0</b></span>
+      <span><i style="background:var(--st-disabled)"></i>사용중지 <b id="cntDisabled">0</b></span>
+    </div>
+    <span class="muted small" id="updatedAt"></span>
+  </div>
+
+  <div id="seatMap"></div>
+</main>
+
+<script th:inline="none">
+App.page(async function () {
+  const esc = App.esc;
+  const cafeId = App.pathSegment(1);
+  const form = document.getElementById('filterForm');
+  const seatMap = document.getElementById('seatMap');
+  let cafe = null;
+
+  function filters() {
+    return {
+      zoneId: form.zoneId.value,
+      seatType: form.seatType.value.trim(),
+      extraItem: form.extraItem.value.trim(),
+      visitors: form.visitors.value
+    };
+  }
+
+  async function loadCafe() {
+    cafe = await App.api('/cafes/' + encodeURIComponent(cafeId));
+    document.title = cafe.cafeName + ' · 카페 캐치테이블';
+    const today = App.isOperatingDay(cafe.operatingDays, new Date());
+    document.getElementById('cafeInfo').innerHTML =
+      '<div class="card__head">' +
+        '<div><h1 style="margin:0">' + esc(cafe.cafeName) + '</h1>' +
+        '<div class="meta">' + esc(cafe.address || '') + '</div></div>' +
+        '<a class="btn" href="/cafes/' + encodeURIComponent(cafeId) + '/reserve">시간대별 예약하기</a>' +
+      '</div>' +
+      '<div class="meta">' +
+        '<span><b>영업</b> ' + esc(cafe.startTime) + ' ~ ' + esc(cafe.endTime) + ' · ' + esc(App.fmtDays(cafe.operatingDays)) +
+        (today ? '' : ' <span class="badge badge--disabled">오늘 휴무</span>') + '</span>' +
+        (cafe.phone ? '<span><b>전화</b> ' + esc(cafe.phone) + '</span>' : '') +
+      '</div>';
+    const zoneSel = form.zoneId;
+    (cafe.zones || []).forEach(function (z) {
+      const o = document.createElement('option');
+      o.value = z.zoneId; o.textContent = z.zoneName;
+      zoneSel.appendChild(o);
+    });
+  }
+
+  async function loadSeats() {
+    const f = filters();
+    const seats = await App.api('/cafes/' + encodeURIComponent(cafeId) + '/seats', { query: f }) || [];
+
+    // 좌석 타입 자동완성 목록
+    const dl = document.getElementById('seatTypeList');
+    const types = Array.from(new Set(seats.map(function (s) { return s.seatType; }).filter(Boolean)));
+    types.forEach(function (t) {
+      if (!dl.querySelector('option[value="' + CSS.escape(t) + '"]')) {
+        const o = document.createElement('option'); o.value = t; dl.appendChild(o);
+      }
+    });
+
+    const count = { '빈자리': 0, '예약됨': 0, '이용중': 0, '사용중지': 0 };
+    seats.forEach(function (s) { if (count[s.currentStatus] !== undefined) count[s.currentStatus]++; });
+    document.getElementById('cntFree').textContent = count['빈자리'];
+    document.getElementById('cntBooked').textContent = count['예약됨'];
+    document.getElementById('cntInuse').textContent = count['이용중'];
+    document.getElementById('cntDisabled').textContent = count['사용중지'];
+    document.getElementById('updatedAt').textContent = App.fmtTime(new Date()) + ' 기준';
+
+    if (!seats.length) {
+      seatMap.innerHTML = '<div class="empty">조건에 맞는 좌석이 없습니다.</div>';
+      return;
+    }
+
+    // 구역별로 묶기 (FR-09: 구역명과 함께 표시)
+    const groups = [];
+    const byZone = {};
+    seats.forEach(function (s) {
+      const key = s.zoneId != null ? s.zoneId : s.zoneName;
+      if (!byZone[key]) { byZone[key] = { name: s.zoneName, seats: [] }; groups.push(byZone[key]); }
+      byZone[key].seats.push(s);
+    });
+
+    seatMap.innerHTML = groups.map(function (g) {
+      return '<section class="zone-block"><h3>' + esc(g.name) +
+        ' <span class="muted small">' + g.seats.length + '석</span></h3><div class="seat-grid">' +
+        g.seats.map(function (s) {
+          const cls = App.statusClass(s.currentStatus);
+          const disabled = s.currentStatus === '사용중지';
+          return '<button type="button" class="seat seat--' + cls + '" data-seat="' + esc(s.seatId) + '"' +
+            (disabled ? ' disabled aria-disabled="true"' : '') +
+            ' aria-label="' + esc(s.seatNum + ' ' + s.currentStatus) + '">' +
+            '<span class="seat__num">' + esc(s.seatNum) + '</span>' +
+            '<span class="seat__info">' + esc(s.seatType || '') + ' · 최대 ' + esc(s.capacity) + '명</span>' +
+            (s.extraItem ? '<span class="seat__info">' + esc(s.extraItem) + '</span>' : '') +
+            '<span class="seat__status">' + esc(s.currentStatus) + '</span>' +
+          '</button>';
+        }).join('') + '</div></section>';
+    }).join('');
+  }
+
+  seatMap.addEventListener('click', function (ev) {
+    const btn = ev.target.closest('.seat');
+    if (!btn || btn.disabled) return;
+    const params = new URLSearchParams({ seatId: btn.dataset.seat });
+    if (form.visitors.value) params.set('visitors', form.visitors.value);
+    location.href = '/cafes/' + encodeURIComponent(cafeId) + '/reserve?' + params;
+  });
+
+  form.addEventListener('submit', function (ev) {
+    ev.preventDefault();
+    loadSeats().catch(App.handleError);
+  });
+  document.getElementById('resetBtn').addEventListener('click', function () {
+    form.reset();
+    loadSeats().catch(App.handleError);
+  });
+
+  try {
+    await loadCafe();
+  } catch (e) {
+    if (e.status === 404) {
+      document.querySelector('main').innerHTML = '<div class="empty">존재하지 않는 카페입니다. <a href="/cafes">목록으로</a></div>';
+      return;
+    }
+    throw e;
+  }
+  await loadSeats();
+
+  // 현재 상태는 조회 시점 기준이므로 30초마다 갱신 (FR-10)
+  setInterval(function () {
+    if (!document.hidden) loadSeats().catch(function () {});
+  }, 30000);
+});
+</script>
+</body>
+</html>

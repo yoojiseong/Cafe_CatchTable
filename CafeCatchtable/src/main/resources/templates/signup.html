@@ -1,0 +1,140 @@
+<!DOCTYPE html>
+<!-- FR-01 회원가입 · A-01 POST /auth/signup, A-02 GET /auth/check-id -->
+<html lang="ko" xmlns:th="http://www.thymeleaf.org">
+<head th:replace="~{fragments/layout :: head('회원가입')}"></head>
+<body data-auth="public">
+<header th:replace="~{fragments/layout :: header}"></header>
+
+<main>
+  <div class="container container--narrow">
+    <section class="card auth-card">
+      <h1>회원가입</h1>
+      <p class="sub">가입 후 바로 카페 좌석을 예약할 수 있습니다</p>
+
+      <form id="signupForm" class="form" novalidate>
+        <div class="field">
+          <label for="memberId">아이디</label>
+          <div class="input-with-btn">
+            <input type="text" id="memberId" name="memberId" maxlength="20" autocomplete="username" required>
+            <button type="button" class="btn btn--ghost" id="checkIdBtn">중복 확인</button>
+          </div>
+          <span class="hint" id="memberIdHint">영문·숫자 4~20자</span>
+        </div>
+        <div class="field">
+          <label for="password">비밀번호</label>
+          <input type="password" id="password" name="password" autocomplete="new-password" required>
+          <span class="hint" id="passwordHint">8자 이상</span>
+        </div>
+        <div class="field">
+          <label for="password2">비밀번호 확인</label>
+          <input type="password" id="password2" name="password2" autocomplete="new-password" required>
+          <span class="hint" id="password2Hint"></span>
+        </div>
+        <div class="field">
+          <label for="name">이름</label>
+          <input type="text" id="name" name="name" maxlength="50" autocomplete="name" required>
+        </div>
+        <div class="field">
+          <label for="phone">전화번호</label>
+          <input type="tel" id="phone" name="phone" placeholder="010-0000-0000" inputmode="numeric" autocomplete="tel" required>
+          <span class="hint" id="phoneHint"></span>
+        </div>
+        <div id="signupError" role="alert" hidden></div>
+        <button type="submit" class="btn btn--block" id="signupBtn">가입하기</button>
+      </form>
+
+      <p class="auth-foot">이미 계정이 있으신가요? <a href="/login">로그인</a></p>
+    </section>
+  </div>
+</main>
+
+<script th:inline="none">
+App.page(function (me) {
+  if (me) { location.replace('/cafes'); return; }
+
+  const ID_RE = /^[A-Za-z0-9]{4,20}$/;
+  const PHONE_RE = /^010-\d{4}-\d{4}$/;
+
+  const form = document.getElementById('signupForm');
+  const idInput = form.memberId;
+  const idHint = document.getElementById('memberIdHint');
+  const checkBtn = document.getElementById('checkIdBtn');
+  const submitBtn = document.getElementById('signupBtn');
+  const errBox = document.getElementById('signupError');
+  let checkedId = null; // 중복 확인을 통과한 아이디
+
+  App.bindPhoneFormat(form.phone);
+
+  function hint(el, msg, state) {
+    el.textContent = msg;
+    el.classList.toggle('is-error', state === 'error');
+    el.classList.toggle('is-ok', state === 'ok');
+  }
+
+  idInput.addEventListener('input', function () {
+    checkedId = null;
+    hint(idHint, '영문·숫자 4~20자');
+  });
+
+  checkBtn.addEventListener('click', async function () {
+    const id = idInput.value.trim();
+    if (!ID_RE.test(id)) { hint(idHint, '아이디는 영문·숫자 4~20자여야 합니다', 'error'); return; }
+    App.setBusy(checkBtn, true);
+    try {
+      const res = await App.api('/auth/check-id', { query: { memberId: id } });
+      if (res.available) { checkedId = id; hint(idHint, '사용할 수 있는 아이디입니다', 'ok'); }
+      else { checkedId = null; hint(idHint, '이미 사용 중인 아이디입니다', 'error'); }
+    } catch (e) {
+      hint(idHint, e.message, 'error');
+    } finally {
+      App.setBusy(checkBtn, false);
+    }
+  });
+
+  form.password.addEventListener('input', function () {
+    const ok = form.password.value.length >= 8;
+    hint(document.getElementById('passwordHint'), ok ? '사용할 수 있는 비밀번호입니다' : '8자 이상', ok ? 'ok' : null);
+  });
+  form.password2.addEventListener('input', function () {
+    const el = document.getElementById('password2Hint');
+    if (!form.password2.value) return hint(el, '');
+    form.password2.value === form.password.value
+      ? hint(el, '비밀번호가 일치합니다', 'ok')
+      : hint(el, '비밀번호가 일치하지 않습니다', 'error');
+  });
+
+  form.addEventListener('submit', async function (ev) {
+    ev.preventDefault();
+    const data = {
+      memberId: idInput.value.trim(),
+      password: form.password.value,
+      name: form.elements['name'].value.trim(),
+      phone: form.phone.value.trim()
+    };
+    let msg = null;
+    if (!ID_RE.test(data.memberId)) msg = '아이디는 영문·숫자 4~20자여야 합니다';
+    else if (checkedId !== data.memberId) msg = '아이디 중복 확인을 해 주세요';
+    else if (data.password.length < 8) msg = '비밀번호는 8자 이상이어야 합니다';
+    else if (data.password !== form.password2.value) msg = '비밀번호가 일치하지 않습니다';
+    else if (!data.name) msg = '이름을 입력해 주세요';
+    else if (data.name.length > 50) msg = '이름은 50자 이하로 입력해 주세요';
+    else if (!PHONE_RE.test(data.phone)) msg = '전화번호는 010-0000-0000 형식으로 입력해 주세요';
+    if (msg) { App.showAlert(errBox, msg); return; }
+
+    App.showAlert(errBox, null);
+    App.setBusy(submitBtn, true);
+    try {
+      await App.api('/auth/signup', { method: 'POST', body: data });
+      App.toast('가입이 완료되었습니다. 로그인해 주세요', 'ok');
+      setTimeout(function () { location.href = '/login'; }, 800);
+    } catch (e) {
+      if (e.code === 'DUPLICATE_ID') { checkedId = null; hint(idHint, e.message, 'error'); }
+      App.showAlert(errBox, e.message);
+    } finally {
+      App.setBusy(submitBtn, false);
+    }
+  });
+});
+</script>
+</body>
+</html>

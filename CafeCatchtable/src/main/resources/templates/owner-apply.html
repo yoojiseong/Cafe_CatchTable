@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<!-- FR-03 점주 권한 획득 · A-06 POST /owners -->
+<html lang="ko" xmlns:th="http://www.thymeleaf.org">
+<head th:replace="~{fragments/layout :: head('점주 신청')}"></head>
+<body>
+<header th:replace="~{fragments/layout :: header}"></header>
+
+<main>
+  <div class="container container--narrow">
+    <section class="card auth-card" id="applyCard">
+      <h1>점주 신청</h1>
+      <p class="sub">사업자등록번호를 등록하면 매장 관리 메뉴가 열립니다</p>
+
+      <form id="applyForm" class="form" novalidate>
+        <div class="field">
+          <label for="businessNum">사업자등록번호</label>
+          <input type="text" id="businessNum" name="businessNum" placeholder="000-00-00000" inputmode="numeric" required autofocus>
+          <span class="hint">숫자 10자리, 하이픈은 자동으로 들어갑니다</span>
+        </div>
+        <div id="applyError" role="alert" hidden></div>
+        <button type="submit" class="btn btn--block" id="applyBtn">신청하기</button>
+      </form>
+    </section>
+  </div>
+</main>
+
+<script th:inline="none">
+App.page(function (me) {
+  if (me.role === 'OWNER') {
+    document.getElementById('applyCard').innerHTML =
+      '<h1>이미 점주입니다</h1><p class="sub">매장 관리에서 카페를 등록하세요.</p>' +
+      '<a class="btn btn--block" href="/owner/cafes">매장 관리로</a>';
+    return;
+  }
+
+  const BIZ_RE = /^\d{3}-\d{2}-\d{5}$/;
+  const form = document.getElementById('applyForm');
+  const btn = document.getElementById('applyBtn');
+  const errBox = document.getElementById('applyError');
+  App.bindBizNumFormat(form.businessNum);
+
+  form.addEventListener('submit', async function (ev) {
+    ev.preventDefault();
+    const businessNum = form.businessNum.value.trim();
+    if (!BIZ_RE.test(businessNum)) {
+      App.showAlert(errBox, '사업자등록번호는 000-00-00000 형식으로 입력해 주세요');
+      return;
+    }
+    App.showAlert(errBox, null);
+    App.setBusy(btn, true);
+    try {
+      await App.api('/owners', { method: 'POST', body: { businessNum: businessNum } });
+      App.toast('점주 권한이 부여되었습니다', 'ok');
+      setTimeout(function () { location.href = '/owner/cafes'; }, 700);
+    } catch (e) {
+      if (e.status === 401) return App.handleError(e);
+      App.showAlert(errBox, e.message);
+      App.setBusy(btn, false);
+    }
+  });
+});
+</script>
+</body>
+</html>

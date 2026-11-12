@@ -1,0 +1,271 @@
+<!DOCTYPE html>
+<!-- FR-11 예약 가능 시간대 · FR-12~14 예약 생성
+     C-02 GET /cafes/{cafeId}, C-04 GET /cafes/{cafeId}/slots, R-01 POST /reservations -->
+<html lang="ko" xmlns:th="http://www.thymeleaf.org">
+<head th:replace="~{fragments/layout :: head('예약하기')}"></head>
+<body>
+<header th:replace="~{fragments/layout :: header}"></header>
+
+<main class="container">
+  <p class="small"><a id="backLink" href="/cafes">← 좌석 배치도</a></p>
+
+  <div class="page-head">
+    <div>
+      <h1 id="cafeName">예약하기</h1>
+      <p id="cafeHours"></p>
+    </div>
+  </div>
+
+  <section class="card" style="margin-bottom:20px">
+    <form id="slotForm" class="form-grid">
+      <div class="field">
+        <label for="date">날짜</label>
+        <input type="date" id="date" name="date" required>
+      </div>
+      <div class="field">
+        <label for="visitors">인원</label>
+        <input type="number" id="visitors" name="visitors" min="1" max="20" value="1" required>
+      </div>
+      <div><button type="submit" class="btn btn--block">빈 시간 조회</button></div>
+    </form>
+    <p class="muted small" style="margin:10px 0 0">오늘부터 7일 이내, 1시간 단위로 시작 시간을 고르세요. 체류시간은 1~4시간(30분 단위)입니다.</p>
+  </section>
+
+  <div class="split split--panel">
+    <section class="card">
+      <div class="card__head">
+        <h2>시간대별 좌석</h2>
+        <div class="legend">
+          <span><i style="background:var(--st-free-bg);border:1px solid var(--st-free)"></i>가능</span>
+          <span><i style="background:var(--st-disabled-bg)"></i>불가</span>
+          <span><i style="background:var(--primary)"></i>선택</span>
+        </div>
+      </div>
+      <div id="slotArea"><p class="muted">날짜와 인원을 고르고 조회하세요.</p></div>
+    </section>
+
+    <aside class="card sticky-panel" id="panel" aria-live="polite">
+      <h2>예약 정보</h2>
+      <div id="panelBody"><p class="muted">왼쪽 표에서 좌석과 시작 시간을 고르세요.</p></div>
+    </aside>
+  </div>
+</main>
+
+<script th:inline="none">
+App.page(async function () {
+  const esc = App.esc;
+  const cafeId = App.pathSegment(1);
+  const form = document.getElementById('slotForm');
+  const slotArea = document.getElementById('slotArea');
+  const panelBody = document.getElementById('panelBody');
+  const BOOKING_DAYS = 7; // 예약 가능 기간 (요구사항 6장)
+
+  const state = {
+    cafe: null,
+    seats: [],            // C-04 응답의 seats
+    date: null,           // 'yyyy-MM-dd'
+    visitors: 1,
+    focusSeatId: App.query('seatId'),
+    sel: null,            // { seat, start: Date }
+    stay: 120,
+    done: null            // 예약 성공 응답
+  };
+
+  document.getElementById('backLink').href = '/cafes/' + encodeURIComponent(cafeId);
+
+  // 날짜 입력 범위: 오늘 ~ 7일 후
+  const today = new Date();
+  form.date.min = App.toApiDate(today);
+  form.date.max = App.toApiDate(App.addDays(today, BOOKING_DAYS));
+  form.date.value = App.query('date') || App.toApiDate(today);
+  if (App.query('visitors')) form.visitors.value = App.query('visitors');
+
+  state.cafe = await App.api('/cafes/' + encodeURIComponent(cafeId));
+  document.getElementById('cafeName').textContent = state.cafe.cafeName + ' 예약';
+  document.getElementById('cafeHours').textContent =
+    '영업 ' + state.cafe.startTime + ' ~ ' + state.cafe.endTime + ' · ' + App.fmtDays(state.cafe.operatingDays);
+  document.title = state.cafe.cafeName + ' 예약 · 카페 캐치테이블';
+
+  /* ---------- 슬롯 조회 (C-04) ---------- */
+  async function loadSlots() {
+    state.date = form.date.value;
+    state.visitors = Math.max(1, parseInt(form.visitors.value, 10) || 1);
+    state.sel = null;
+    state.done = null;
+    renderPanel();
+
+    if (!state.date) { slotArea.innerHTML = '<div class="alert alert--error">날짜를 선택해 주세요</div>'; return; }
+    slotArea.innerHTML = '<p class="muted">불러오는 중…</p>';
+    try {
+      const data = await App.api('/cafes/' + encodeURIComponent(cafeId) + '/slots',
+        { query: { date: state.date, visitors: state.visitors } });
+      state.seats = (data && data.seats) || [];
+      renderSlots();
+    } catch (e) {
+      state.seats = [];
+      if (e.status === 401) return App.handleError(e);
+      // 휴무일 → OUT_OF_BUSINESS_HOURS 는 '영업일이 아닙니다'로 안내 (FR-11)
+      const msg = e.code === 'OUT_OF_BUSINESS_HOURS' ? '영업일이 아닙니다' : e.message;
+      slotArea.innerHTML = '<div class="alert alert--error">' + esc(msg) + '</div>';
+    }
+  }
+
+  function selRange() {
+    if (!state.sel) return null;
+    return { start: state.sel.start, end: App.addMinutes(state.sel.start, state.stay) };
+  }
+
+  /** 선택 범위 안의 슬롯 중 불가한 것이 있는지 (웹 보조 검증, 최종 판단은 DB) */
+  function selectionProblem() {
+    const r = selRange();
+    if (!r) return null;
+    const closeAt = App.atTime(App.parseDt(state.date), state.cafe.endTime);
+    if (r.end > closeAt) return '영업 종료(' + state.cafe.endTime + ') 전에 끝나도록 체류시간을 줄여 주세요';
+    const seat = state.sel.seat;
+    const blocked = seat.slots.some(function (sl) {
+      const s = App.parseDt(sl.start);
+      const e = App.addMinutes(s, 60);
+      return !sl.available && s < r.end && e > r.start;
+    });
+    if (blocked) return '선택한 시간 중 이미 예약된 구간이 있습니다';
+    return null;
+  }
+
+  function renderSlots() {
+    if (!state.seats.length) {
+      slotArea.innerHTML = '<div class="empty">' + state.visitors + '명이 앉을 수 있는 좌석이 없습니다.</div>';
+      return;
+    }
+    const now = new Date();
+    const r = selRange();
+    const hours = state.seats[0].slots.map(function (sl) { return App.parseDt(sl.start); });
+
+    let html = '<div class="scroll-x"><table class="slot-table"><thead><tr><th scope="col">좌석</th>';
+    hours.forEach(function (h) { html += '<th scope="col">' + String(h.getHours()).padStart(2, '0') + '시</th>'; });
+    html += '</tr></thead><tbody>';
+
+    state.seats.forEach(function (seat, si) {
+      const isFocus = String(seat.seatId) === String(state.focusSeatId);
+      html += '<tr' + (isFocus ? ' class="is-focus"' : '') + '><th scope="row"><b>' + esc(seat.seatNum) + '</b>' +
+        esc(seat.zoneName || '') + '</th>';
+      seat.slots.forEach(function (sl, ti) {
+        const start = App.parseDt(sl.start);
+        const past = start < now;
+        let cls = past ? 'slot--past' : sl.available ? 'slot--yes' : 'slot--no';
+        const inSel = r && state.sel.seat === seat && start < r.end && App.addMinutes(start, 60) > r.start;
+        if (inSel) cls += sl.available && !past ? ' is-selected' : ' is-conflict';
+        const label = seat.seatNum + ' ' + App.fmtTime(start) + ' ' + (past ? '지난 시간' : sl.available ? '예약 가능' : '예약 불가');
+        html += '<td><button type="button" class="slot ' + cls + '" data-si="' + si + '" data-ti="' + ti + '"' +
+          ((past || !sl.available) ? ' disabled' : '') + ' aria-label="' + esc(label) + '">' +
+          (past ? '' : sl.available ? (inSel ? '선택' : '') : '불가') + '</button></td>';
+      });
+      html += '</tr>';
+    });
+    html += '</tbody></table></div>';
+    slotArea.innerHTML = html;
+
+    const focusRow = slotArea.querySelector('tr.is-focus');
+    if (focusRow && !state.sel) focusRow.scrollIntoView({ block: 'nearest' });
+  }
+
+  slotArea.addEventListener('click', function (ev) {
+    const btn = ev.target.closest('.slot');
+    if (!btn || btn.disabled) return;
+    const seat = state.seats[+btn.dataset.si];
+    const slot = seat.slots[+btn.dataset.ti];
+    state.sel = { seat: seat, start: App.parseDt(slot.start) };
+    state.done = null;
+    renderSlots();
+    renderPanel();
+  });
+
+  /* ---------- 오른쪽 패널 ---------- */
+  function renderPanel() {
+    if (state.done) {
+      const d = state.done;
+      panelBody.innerHTML =
+        '<div class="alert alert--info" style="margin-bottom:12px">예약이 완료되었습니다</div>' +
+        '<dl class="summary">' +
+          '<dt>예약번호</dt><dd>' + esc(d.reservationId) + '</dd>' +
+          '<dt>카페</dt><dd>' + esc(d.cafeName) + '</dd>' +
+          '<dt>좌석</dt><dd>' + esc(d.seatNum) + '</dd>' +
+          '<dt>시간</dt><dd>' + esc(App.fmtRange(d.startDt, d.endDt)) + '</dd>' +
+          '<dt>인원</dt><dd>' + esc(d.visitorCount) + '명</dd>' +
+          '<dt>상태</dt><dd>' + App.badge(d.status) + '</dd>' +
+          '<dt>예약일시</dt><dd>' + esc(App.fmtDateTime(d.createdAt)) + '</dd>' +
+        '</dl>' +
+        '<p class="muted small" style="margin-top:12px">입실 10분 전부터 15분 후까지 마이페이지에서 체크인하세요. 15분이 지나면 노쇼 처리됩니다.</p>' +
+        '<div class="stack" style="gap:8px"><a class="btn btn--block" href="/mypage">마이페이지로</a>' +
+        '<button type="button" class="btn btn--ghost btn--block" id="againBtn">다른 시간 예약</button></div>';
+      document.getElementById('againBtn').addEventListener('click', loadSlots);
+      return;
+    }
+    if (!state.sel) {
+      panelBody.innerHTML = '<p class="muted">왼쪽 표에서 좌석과 시작 시간을 고르세요.</p>';
+      return;
+    }
+    const r = selRange();
+    const problem = selectionProblem();
+    let opts = '';
+    for (let m = 60; m <= 240; m += 30) {
+      opts += '<option value="' + m + '"' + (m === state.stay ? ' selected' : '') + '>' + App.fmtMinutes(m) + '</option>';
+    }
+    panelBody.innerHTML =
+      '<dl class="summary" style="margin-bottom:14px">' +
+        '<dt>좌석</dt><dd>' + esc(state.sel.seat.seatNum) + ' <span class="muted small">' + esc(state.sel.seat.zoneName || '') + '</span></dd>' +
+        '<dt>날짜</dt><dd>' + esc(App.fmtDate(r.start)) + '</dd>' +
+        '<dt>시간</dt><dd>' + App.fmtTime(r.start) + ' ~ ' + App.fmtTime(r.end) + '</dd>' +
+        '<dt>인원</dt><dd>' + state.visitors + '명</dd>' +
+      '</dl>' +
+      '<div class="field" style="margin-bottom:14px"><label for="stay">예상 체류시간</label>' +
+        '<select id="stay">' + opts + '</select></div>' +
+      (problem ? '<div class="alert alert--warn" style="margin-bottom:12px">' + esc(problem) + '</div>' : '') +
+      '<div id="resvError" role="alert" hidden style="margin-bottom:12px"></div>' +
+      '<button type="button" class="btn btn--block" id="reserveBtn"' + (problem ? ' disabled' : '') + '>예약 확정</button>';
+
+    document.getElementById('stay').addEventListener('change', function (ev) {
+      state.stay = +ev.target.value;
+      renderSlots();
+      renderPanel();
+    });
+    document.getElementById('reserveBtn').addEventListener('click', submit);
+  }
+
+  /* ---------- 예약 생성 (R-01) ---------- */
+  async function submit() {
+    const btn = document.getElementById('reserveBtn');
+    const errBox = document.getElementById('resvError');
+    App.setBusy(btn, true);
+    try {
+      state.done = await App.api('/reservations', {
+        method: 'POST',
+        body: {
+          seatId: state.sel.seat.seatId,
+          startDt: App.toApiDt(state.sel.start),
+          stayMinutes: state.stay,
+          visitorCount: state.visitors
+        }
+      });
+      App.toast('예약이 완료되었습니다', 'ok');
+      state.sel = null;
+      renderPanel();
+      // 표 갱신(방금 예약한 슬롯이 불가로 바뀜). 패널의 완료 정보는 유지
+      const done = state.done;
+      const data = await App.api('/cafes/' + encodeURIComponent(cafeId) + '/slots',
+        { query: { date: state.date, visitors: state.visitors } });
+      state.seats = (data && data.seats) || [];
+      state.done = done;
+      renderSlots();
+    } catch (e) {
+      if (e.status === 401) return App.handleError(e);
+      App.showAlert(errBox, e.message);
+      App.setBusy(btn, false);
+    }
+  }
+
+  form.addEventListener('submit', function (ev) { ev.preventDefault(); loadSlots(); });
+  await loadSlots();
+});
+</script>
+</body>
+</html>

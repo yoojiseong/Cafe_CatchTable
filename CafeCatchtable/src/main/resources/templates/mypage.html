@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<!-- FR-19 내 예약 내역 · FR-15 취소 · FR-16 체크인 · FR-17 퇴실
+     A-05 GET /auth/me, R-02 GET /reservations/me,
+     R-04 /cancel, R-05 /check-in, R-06 /check-out -->
+<html lang="ko" xmlns:th="http://www.thymeleaf.org">
+<head th:replace="~{fragments/layout :: head('마이페이지')}"></head>
+<body>
+<header th:replace="~{fragments/layout :: header}"></header>
+
+<main class="container">
+  <div class="page-head">
+    <div>
+      <h1>마이페이지</h1>
+      <p id="profile"></p>
+    </div>
+    <a class="btn btn--ghost" href="/owner/apply" data-show="user-only" hidden>점주 신청</a>
+  </div>
+
+  <div class="tabs" role="tablist">
+    <button type="button" role="tab" id="tab-active" aria-selected="true" data-type="active">진행 중</button>
+    <button type="button" role="tab" id="tab-past" aria-selected="false" data-type="past">지난 이력</button>
+    <button type="button" class="btn btn--ghost btn--sm" id="refreshBtn" style="margin-left:auto;align-self:center">새로고침</button>
+  </div>
+
+  <div id="resvList" class="resv-list" role="tabpanel" aria-live="polite"></div>
+</main>
+
+<script th:inline="none">
+App.page(async function (me) {
+  const esc = App.esc;
+  const list = document.getElementById('resvList');
+  const CHECKIN_BEFORE = 10, CHECKIN_AFTER = 15; // 체크인 허용: 입실 10분 전 ~ 15분 후 (FR-16)
+
+  document.getElementById('profile').innerHTML =
+    esc(me.name) + ' (' + esc(me.memberId) + ')' + (me.phone ? ' · ' + esc(me.phone) : '') +
+    ' · ' + (me.role === 'OWNER' ? '<span class="badge badge--owner">점주</span>' : '<span class="badge badge--done">회원</span>');
+
+  let type = 'active';
+  let items = [];
+  let loadedAt = Date.now();
+
+  async function load() {
+    list.innerHTML = '<p class="muted">불러오는 중…</p>';
+    try {
+      items = await App.api('/reservations/me', { query: { type: type } }) || [];
+      loadedAt = Date.now();
+      render();
+    } catch (e) {
+      list.innerHTML = '';
+      App.handleError(e);
+    }
+  }
+
+  /** 남은 시간(분): 서버의 remainingMinutes에서 화면을 연 뒤 지난 시간만큼 뺌 */
+  function remaining(r) {
+    const elapsed = (Date.now() - loadedAt) / 60000;
+    if (r.remainingMinutes != null) return Math.max(0, r.remainingMinutes - elapsed);
+    const end = App.parseDt(r.endDt);
+    return end ? Math.max(0, (end - Date.now()) / 60000) : 0;
+  }
+
+  function actions(r) {
+    if (r.status === '예약완료') {
+      const start = App.parseDt(r.startDt);
+      const now = new Date();
+      const open = App.addMinutes(start, -CHECKIN_BEFORE);
+      const close = App.addMinutes(start, CHECKIN_AFTER);
+      const canCheckIn = now >= open && now <= close;
+      return '<div class="stack" style="gap:6px;justify-items:end">' +
+        '<div class="resv__actions">' +
+          '<button type="button" class="btn btn--sm" data-act="check-in" data-id="' + esc(r.reservationId) + '"' +
+            (canCheckIn ? '' : ' disabled') + '>체크인</button>' +
+          '<button type="button" class="btn btn--danger btn--sm" data-act="cancel" data-id="' + esc(r.reservationId) + '">예약 취소</button>' +
+        '</div>' +
+        (canCheckIn ? '' : '<span class="muted small">' +
+          (now < open ? App.fmtTime(open) + '부터 체크인 가능' : '체크인 가능 시간이 지났습니다') + '</span>') +
+      '</div>';
+    }
+    if (r.status === '이용중') {
+      return '<div class="stack" style="gap:8px;justify-items:end">' +
+        '<div class="resv__remain" data-remain="' + esc(r.reservationId) + '">' + App.fmtMinutes(remaining(r)) +
+          '<small>남은 시간</small></div>' +
+        '<button type="button" class="btn btn--sm" data-act="check-out" data-id="' + esc(r.reservationId) + '">퇴실</button>' +
+      '</div>';
+    }
+    return '';
+  }
+
+  function render() {
+    if (!items.length) {
+      list.innerHTML = '<div class="empty">' +
+        (type === 'active' ? '진행 중인 예약이 없습니다. <a href="/cafes">카페 찾기</a>' : '지난 예약 이력이 없습니다.') +
+        '</div>';
+      return;
+    }
+    list.innerHTML = items.map(function (r) {
+      return '<article class="card resv">' +
+        '<div class="stack" style="gap:4px">' +
+          '<div class="row">' + App.badge(r.status) +
+            '<span class="resv__title">' + esc(r.cafeName) + '</span></div>' +
+          '<div class="resv__when">' + esc(App.fmtRange(r.startDt, r.endDt)) + '</div>' +
+          '<div class="meta">' +
+            '<span>' + esc(r.zoneName || '') + ' · 좌석 ' + esc(r.seatNum) + ' · ' + esc(r.visitorCount) + '명</span>' +
+            (r.actualIn ? '<span>입실 ' + esc(App.fmtDateTime(r.actualIn)) +
+              (r.actualOut ? ' · 퇴실 ' + esc(App.fmtTime(r.actualOut)) : '') + '</span>' : '') +
+            '<span class="small">예약번호 ' + esc(r.reservationId) + '</span>' +
+          '</div>' +
+        '</div>' +
+        actions(r) +
+      '</article>';
+    }).join('');
+  }
+
+  const CONFIRM = {
+    'cancel': '이 예약을 취소할까요?',
+    'check-in': '지금 체크인할까요?',
+    'check-out': '퇴실 처리할까요? 좌석은 바로 빈자리가 됩니다.'
+  };
+  const DONE = { 'cancel': '예약을 취소했습니다', 'check-in': '체크인되었습니다', 'check-out': '퇴실 처리되었습니다' };
+
+  list.addEventListener('click', async function (ev) {
+    const btn = ev.target.closest('[data-act]');
+    if (!btn || btn.disabled) return;
+    const act = btn.dataset.act;
+    if (!window.confirm(CONFIRM[act])) return;
+    App.setBusy(btn, true);
+    try {
+      await App.api('/reservations/' + encodeURIComponent(btn.dataset.id) + '/' + act, { method: 'POST' });
+      App.toast(DONE[act], 'ok');
+      await load();
+    } catch (e) {
+      App.handleError(e);
+      App.setBusy(btn, false);
+    }
+  });
+
+  document.querySelectorAll('.tabs [role="tab"]').forEach(function (tab) {
+    tab.addEventListener('click', function () {
+      type = tab.dataset.type;
+      document.querySelectorAll('.tabs [role="tab"]').forEach(function (t) {
+        t.setAttribute('aria-selected', String(t === tab));
+      });
+      load();
+    });
+  });
+  document.getElementById('refreshBtn').addEventListener('click', load);
+
+  // 남은 시간·체크인 버튼 상태를 30초마다 다시 그림
+  setInterval(function () {
+    if (type === 'active' && items.length && !document.hidden) render();
+  }, 30000);
+
+  await load();
+});
+</script>
+</body>
+</html>

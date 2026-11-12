@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<!-- FR-08 카페 검색 · C-01 GET /cafes?keyword= -->
+<html lang="ko" xmlns:th="http://www.thymeleaf.org">
+<head th:replace="~{fragments/layout :: head('카페 찾기')}"></head>
+<body>
+<header th:replace="~{fragments/layout :: header}"></header>
+
+<main class="container">
+  <div class="page-head">
+    <div>
+      <h1>카페 찾기</h1>
+      <p>카페 이름이나 주소로 검색하세요</p>
+    </div>
+  </div>
+
+  <form id="searchForm" class="search-bar" role="search">
+    <input type="search" id="keyword" name="keyword" placeholder="예: 서면, 스터디" aria-label="검색어">
+    <button type="submit" class="btn">검색</button>
+  </form>
+
+  <p class="muted small" id="resultInfo" aria-live="polite"></p>
+  <div id="cafeList" class="cafe-grid"></div>
+</main>
+
+<script th:inline="none">
+App.page(async function () {
+  const form = document.getElementById('searchForm');
+  const input = document.getElementById('keyword');
+  const list = document.getElementById('cafeList');
+  const info = document.getElementById('resultInfo');
+  const esc = App.esc;
+
+  input.value = App.query('keyword') || '';
+
+  async function search() {
+    const keyword = input.value.trim();
+    const url = new URL(location.href);
+    keyword ? url.searchParams.set('keyword', keyword) : url.searchParams.delete('keyword');
+    history.replaceState(null, '', url);
+
+    info.textContent = '불러오는 중…';
+    try {
+      const cafes = await App.api('/cafes', { query: { keyword: keyword } }) || [];
+      if (!cafes.length) {
+        info.textContent = '';
+        list.innerHTML = '<div class="empty" style="grid-column:1/-1">' +
+          (keyword ? '“' + esc(keyword) + '”에 맞는 카페가 없습니다.' : '등록된 카페가 없습니다.') + '</div>';
+        return;
+      }
+      info.textContent = (keyword ? '“' + keyword + '” 검색 결과 ' : '전체 ') + cafes.length + '곳';
+      list.innerHTML = cafes.map(function (c) {
+        const open = App.isOperatingDay(c.operatingDays, new Date());
+        return '<a class="card cafe-card" href="/cafes/' + encodeURIComponent(c.cafeId) + '">' +
+          '<div class="row" style="justify-content:space-between">' +
+            '<h3>' + esc(c.cafeName) + '</h3>' +
+            (open ? '<span class="badge badge--free">오늘 영업</span>' : '<span class="badge badge--disabled">오늘 휴무</span>') +
+          '</div>' +
+          '<div class="meta">' +
+            '<span>' + esc(c.address || '') + '</span>' +
+            '<span><b>영업</b> ' + esc(c.startTime) + ' ~ ' + esc(c.endTime) + ' · ' + esc(App.fmtDays(c.operatingDays)) + '</span>' +
+            (c.phone ? '<span><b>전화</b> ' + esc(c.phone) + '</span>' : '') +
+          '</div>' +
+        '</a>';
+      }).join('');
+    } catch (e) {
+      info.textContent = '';
+      list.innerHTML = '';
+      App.handleError(e);
+    }
+  }
+
+  form.addEventListener('submit', function (ev) { ev.preventDefault(); search(); });
+  await search();
+});
+</script>
+</body>
+</html>

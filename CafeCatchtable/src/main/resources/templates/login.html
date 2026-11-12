@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<!-- FR-02 로그인 · A-03 POST /auth/login -->
+<html lang="ko" xmlns:th="http://www.thymeleaf.org">
+<head th:replace="~{fragments/layout :: head('로그인')}"></head>
+<body data-auth="public">
+<header th:replace="~{fragments/layout :: header}"></header>
+
+<main>
+  <div class="container container--narrow">
+    <section class="card auth-card">
+      <h1>로그인</h1>
+      <p class="sub">원하는 좌석을 미리 잡아 두세요</p>
+
+      <form id="loginForm" class="form" novalidate>
+        <div class="field">
+          <label for="memberId">아이디</label>
+          <input type="text" id="memberId" name="memberId" autocomplete="username" required autofocus>
+        </div>
+        <div class="field">
+          <label for="password">비밀번호</label>
+          <input type="password" id="password" name="password" autocomplete="current-password" required>
+        </div>
+        <div id="loginError" role="alert" hidden></div>
+        <button type="submit" class="btn btn--block" id="loginBtn">로그인</button>
+      </form>
+
+      <p class="auth-foot">아직 회원이 아니신가요? <a href="/signup">회원가입</a></p>
+    </section>
+  </div>
+</main>
+
+<script th:inline="none">
+App.page(function (me) {
+  const next = App.query('next');
+  const target = next && next.charAt(0) === '/' && next.indexOf('//') !== 0 ? next : '/cafes';
+  if (me) { location.replace(target); return; }
+
+  const form = document.getElementById('loginForm');
+  const btn = document.getElementById('loginBtn');
+  const errBox = document.getElementById('loginError');
+
+  form.addEventListener('submit', async function (ev) {
+    ev.preventDefault();
+    const memberId = form.memberId.value.trim();
+    const password = form.password.value;
+    if (!memberId || !password) {
+      App.showAlert(errBox, '아이디와 비밀번호를 입력해 주세요');
+      return;
+    }
+    App.showAlert(errBox, null);
+    App.setBusy(btn, true);
+    try {
+      await App.api('/auth/login', { method: 'POST', body: { memberId: memberId, password: password } });
+      location.replace(target);
+    } catch (e) {
+      // 아이디·비밀번호 중 어느 쪽이 틀렸는지 구분하지 않음 (FR-02)
+      App.showAlert(errBox, e.status === 401 ? '아이디 또는 비밀번호가 올바르지 않습니다' : e.message);
+      form.password.value = '';
+      form.password.focus();
+    } finally {
+      App.setBusy(btn, false);
+    }
+  });
+});
+</script>
+</body>
+</html>

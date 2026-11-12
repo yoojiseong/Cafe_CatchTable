@@ -1,0 +1,446 @@
+<!DOCTYPE html>
+<!-- FR-04 카페 등록·수정 · FR-05 구역 관리 · FR-06 좌석 관리 · FR-07 좌석 삭제 보호
+     O-01~O-09, C-02 GET /cafes/{cafeId}(구역), C-03 GET /cafes/{cafeId}/seats(좌석) -->
+<html lang="ko" xmlns:th="http://www.thymeleaf.org">
+<head th:replace="~{fragments/layout :: head('매장 관리')}"></head>
+<body data-auth="owner">
+<header th:replace="~{fragments/layout :: header}"></header>
+
+<main class="container">
+  <div class="page-head">
+    <div>
+      <h1>매장 관리</h1>
+      <p>카페 정보, 구역, 좌석을 관리합니다</p>
+    </div>
+  </div>
+
+  <div class="split">
+    <!-- 내 카페 목록 -->
+    <aside class="card">
+      <div class="card__head">
+        <h2>내 카페</h2>
+        <button type="button" class="btn btn--sm" id="newCafeBtn">+ 새 카페</button>
+      </div>
+      <nav class="list-nav" id="cafeNav" aria-label="내 카페 목록"></nav>
+    </aside>
+
+    <div class="stack">
+      <!-- 카페 정보 폼 -->
+      <section class="card">
+        <div class="card__head"><h2 id="cafeFormTitle">카페 정보</h2></div>
+        <form id="cafeForm" class="form" novalidate>
+          <div class="form-grid">
+            <div class="field"><label for="cafeName">카페 이름</label><input type="text" id="cafeName" name="cafeName" maxlength="100" required></div>
+            <div class="field"><label for="phone">전화번호</label><input type="tel" id="phone" name="phone" placeholder="051-000-0000"></div>
+          </div>
+          <div class="field"><label for="address">주소</label><input type="text" id="address" name="address" maxlength="200" required></div>
+          <div class="form-grid">
+            <div class="field"><label for="startTime">영업 시작</label><input type="time" id="startTime" name="startTime" required></div>
+            <div class="field"><label for="endTime">영업 종료</label><input type="time" id="endTime" name="endTime" required></div>
+          </div>
+          <div class="field">
+            <span class="label">영업일</span>
+            <div class="checks" id="dayChecks"></div>
+          </div>
+          <div id="cafeError" role="alert" hidden></div>
+          <div class="row"><button type="submit" class="btn" id="cafeSaveBtn">저장</button></div>
+        </form>
+      </section>
+
+      <!-- 구역·좌석 -->
+      <section class="card" id="zoneSection" hidden>
+        <div class="card__head">
+          <h2>구역·좌석</h2>
+          <a class="btn btn--ghost btn--sm" id="viewSeatMap" href="#">좌석 배치도 보기</a>
+        </div>
+        <div id="zoneList" class="stack"></div>
+        <form id="zoneAddForm" class="input-with-btn" style="margin-top:16px">
+          <input type="text" name="zoneName" placeholder="새 구역 이름 (예: 1층 메인홀)" maxlength="50" aria-label="새 구역 이름">
+          <button type="submit" class="btn">구역 추가</button>
+        </form>
+      </section>
+    </div>
+  </div>
+</main>
+
+<!-- 좌석 등록·수정 대화상자 -->
+<dialog id="seatDialog" aria-labelledby="seatDialogTitle">
+  <form id="seatForm" method="dialog" novalidate>
+    <div class="dialog__body">
+      <h2 id="seatDialogTitle" style="margin:0">좌석 등록</h2>
+      <div class="form-grid">
+        <div class="field"><label for="seatNum">좌석번호</label><input type="text" id="seatNum" name="seatNum" maxlength="20" required placeholder="예: O-04"></div>
+        <div class="field"><label for="capacity">적정인원</label><input type="number" id="capacity" name="capacity" min="1" max="20" value="1" required></div>
+      </div>
+      <div class="field">
+        <label for="seatType">좌석 타입</label>
+        <input type="text" id="seatType" name="seatType" list="seatTypeOptions" maxlength="30" required placeholder="예: 1인석">
+        <datalist id="seatTypeOptions">
+          <option value="1인석"></option><option value="2인 테이블"></option><option value="4인 테이블"></option>
+          <option value="4인 소파"></option><option value="바 좌석"></option><option value="단체석"></option>
+        </datalist>
+      </div>
+      <div class="field">
+        <label for="extraItem">별도품목</label>
+        <input type="text" id="extraItem" name="extraItem" maxlength="100" placeholder="예: 콘센트 2구, 쿠션">
+      </div>
+      <label class="check-inline" id="disabledWrap"><input type="checkbox" name="seatOff"> 사용중지 (예약 목록에서 제외)</label>
+      <div id="seatError" role="alert" hidden></div>
+    </div>
+    <div class="dialog__foot">
+      <button type="button" class="btn btn--ghost" id="seatCancelBtn">닫기</button>
+      <button type="submit" class="btn" id="seatSaveBtn">저장</button>
+    </div>
+  </form>
+</dialog>
+
+<script th:inline="none">
+App.page(async function () {
+  const esc = App.esc;
+  const state = { cafes: [], cafeId: null, zones: [], seatsByZone: {} };
+
+  const cafeNav = document.getElementById('cafeNav');
+  const cafeForm = document.getElementById('cafeForm');
+  const zoneSection = document.getElementById('zoneSection');
+  const zoneList = document.getElementById('zoneList');
+
+  /* ---------- 영업일 체크박스 ---------- */
+  document.getElementById('dayChecks').innerHTML = App.DAY_CODES.map(function (c) {
+    return '<label class="check-chip"><input type="checkbox" name="days" value="' + c + '"><span>' + App.DAY_KO[c] + '</span></label>';
+  }).join('');
+
+  /* ---------- 카페 목록 (O-01) ---------- */
+  async function loadCafes(selectId) {
+    state.cafes = await App.api('/owner/cafes') || [];
+    if (!state.cafes.length) {
+      cafeNav.innerHTML = '<p class="muted small">등록된 카페가 없습니다.<br>오른쪽에서 첫 카페를 등록하세요.</p>';
+      newCafe();
+      return;
+    }
+    const target = selectId != null ? selectId : (App.query('cafeId') || state.cafes[0].cafeId);
+    await selectCafe(target);
+  }
+
+  function renderNav() {
+    cafeNav.innerHTML = state.cafes.map(function (c) {
+      return '<button type="button" data-cafe="' + esc(c.cafeId) + '"' +
+        (String(c.cafeId) === String(state.cafeId) ? ' class="is-active" aria-current="true"' : '') + '>' +
+        esc(c.cafeName) + '<small>' + esc(c.startTime) + ' ~ ' + esc(c.endTime) + ' · ' + esc(App.fmtDays(c.operatingDays)) + '</small></button>';
+    }).join('');
+  }
+
+  cafeNav.addEventListener('click', function (ev) {
+    const b = ev.target.closest('[data-cafe]');
+    if (b) selectCafe(b.dataset.cafe).catch(App.handleError);
+  });
+
+  function fillCafeForm(c) {
+    cafeForm.cafeName.value = c ? c.cafeName || '' : '';
+    cafeForm.address.value = c ? c.address || '' : '';
+    cafeForm.phone.value = c ? c.phone || '' : '';
+    cafeForm.startTime.value = c ? (c.startTime || '').slice(0, 5) : '09:00';
+    cafeForm.endTime.value = c ? (c.endTime || '').slice(0, 5) : '22:00';
+    const days = c && c.operatingDays ? c.operatingDays.split(',').map(function (s) { return s.trim(); }) : App.DAY_CODES;
+    cafeForm.querySelectorAll('input[name="days"]').forEach(function (cb) { cb.checked = days.indexOf(cb.value) >= 0; });
+    App.showAlert('#cafeError', null);
+  }
+
+  function newCafe() {
+    state.cafeId = null;
+    renderNav();
+    document.getElementById('cafeFormTitle').textContent = '새 카페 등록';
+    fillCafeForm(null);
+    zoneSection.hidden = true;
+    cafeForm.cafeName.focus();
+  }
+  document.getElementById('newCafeBtn').addEventListener('click', newCafe);
+
+  async function selectCafe(id) {
+    const c = state.cafes.find(function (x) { return String(x.cafeId) === String(id); }) || state.cafes[0];
+    state.cafeId = c.cafeId;
+    const url = new URL(location.href);
+    url.searchParams.set('cafeId', c.cafeId);
+    history.replaceState(null, '', url);
+    renderNav();
+    document.getElementById('cafeFormTitle').textContent = '카페 정보 수정';
+    fillCafeForm(c);
+    document.getElementById('viewSeatMap').href = '/cafes/' + encodeURIComponent(c.cafeId);
+    zoneSection.hidden = false;
+    await loadZones();
+  }
+
+  /* ---------- 카페 저장 (O-02 / O-03) ---------- */
+  cafeForm.addEventListener('submit', async function (ev) {
+    ev.preventDefault();
+    const days = Array.from(cafeForm.querySelectorAll('input[name="days"]:checked')).map(function (cb) { return cb.value; });
+    const body = {
+      cafeName: cafeForm.cafeName.value.trim(),
+      address: cafeForm.address.value.trim(),
+      phone: cafeForm.phone.value.trim(),
+      startTime: cafeForm.startTime.value,
+      endTime: cafeForm.endTime.value,
+      operatingDays: days.join(',')
+    };
+    let msg = null;
+    if (!body.cafeName) msg = '카페 이름을 입력해 주세요';
+    else if (!body.address) msg = '주소를 입력해 주세요';
+    else if (!body.startTime || !body.endTime) msg = '영업 시작·종료 시간을 입력해 주세요';
+    else if (body.endTime <= body.startTime) msg = '영업 종료 시간은 시작 시간보다 늦어야 합니다';
+    else if (!days.length) msg = '영업일을 하나 이상 선택해 주세요';
+    if (msg) { App.showAlert('#cafeError', msg); return; }
+
+    const btn = document.getElementById('cafeSaveBtn');
+    App.setBusy(btn, true);
+    try {
+      let saved;
+      if (state.cafeId == null) {
+        saved = await App.api('/owner/cafes', { method: 'POST', body: body });
+        App.toast('카페를 등록했습니다', 'ok');
+      } else {
+        saved = await App.api('/owner/cafes/' + encodeURIComponent(state.cafeId), { method: 'PUT', body: body });
+        App.toast('카페 정보를 저장했습니다', 'ok');
+      }
+      await loadCafes(saved && saved.cafeId != null ? saved.cafeId : state.cafeId);
+    } catch (e) {
+      if (e.status === 401) return App.handleError(e);
+      App.showAlert('#cafeError', e.message);
+    } finally {
+      App.setBusy(btn, false);
+    }
+  });
+
+  /* ---------- 구역·좌석 조회 ---------- */
+  async function loadZones() {
+    zoneList.innerHTML = '<p class="muted">불러오는 중…</p>';
+    const [detail, seats] = await Promise.all([
+      App.api('/cafes/' + encodeURIComponent(state.cafeId)),
+      App.api('/cafes/' + encodeURIComponent(state.cafeId) + '/seats')
+    ]);
+    state.zones = (detail && detail.zones) || [];
+    state.seatsByZone = {};
+    (seats || []).forEach(function (s) {
+      (state.seatsByZone[s.zoneId] = state.seatsByZone[s.zoneId] || []).push(s);
+    });
+    renderZones();
+  }
+
+  function renderZones() {
+    if (!state.zones.length) {
+      zoneList.innerHTML = '<div class="empty">구역이 없습니다. 아래에서 구역을 먼저 추가하세요.</div>';
+      return;
+    }
+    zoneList.innerHTML = state.zones.map(function (z) {
+      const seats = state.seatsByZone[z.zoneId] || [];
+      return '<section class="card card--flat" data-zone="' + esc(z.zoneId) + '">' +
+        '<div class="card__head" data-zone-head>' +
+          '<h3>' + esc(z.zoneName) + ' <span class="muted small">' + seats.length + '석</span></h3>' +
+          '<div class="row">' +
+            '<button type="button" class="btn btn--sm" data-act="add-seat">+ 좌석</button>' +
+            '<button type="button" class="btn btn--ghost btn--sm" data-act="rename-zone">이름 변경</button>' +
+            '<button type="button" class="btn btn--danger btn--sm" data-act="delete-zone">구역 삭제</button>' +
+          '</div>' +
+        '</div>' +
+        (seats.length ?
+          '<div class="scroll-x"><table class="table"><thead><tr>' +
+            '<th>좌석번호</th><th>타입</th><th class="num">적정인원</th><th>별도품목</th><th>상태</th><th></th>' +
+          '</tr></thead><tbody>' +
+          seats.map(function (s) {
+            const off = s.currentStatus === '사용중지';
+            return '<tr data-seat="' + esc(s.seatId) + '"' + (off ? ' class="is-faded"' : '') + '>' +
+              '<td><b>' + esc(s.seatNum) + '</b></td>' +
+              '<td>' + esc(s.seatType || '') + '</td>' +
+              '<td class="num">' + esc(s.capacity) + '명</td>' +
+              '<td>' + esc(s.extraItem || '-') + '</td>' +
+              '<td>' + App.badge(s.currentStatus) + '</td>' +
+              '<td><div class="actions">' +
+                '<button type="button" class="btn btn--ghost btn--sm" data-act="toggle-seat">' + (off ? '사용재개' : '사용중지') + '</button>' +
+                '<button type="button" class="btn btn--ghost btn--sm" data-act="edit-seat">수정</button>' +
+                '<button type="button" class="btn btn--danger btn--sm" data-act="delete-seat">삭제</button>' +
+              '</div></td></tr>';
+          }).join('') + '</tbody></table></div>'
+          : '<p class="muted small" style="margin:0">좌석이 없습니다.</p>') +
+      '</section>';
+    }).join('');
+  }
+
+  function findZone(id) { return state.zones.find(function (z) { return String(z.zoneId) === String(id); }); }
+  function findSeat(zoneId, seatId) {
+    return (state.seatsByZone[zoneId] || []).find(function (s) { return String(s.seatId) === String(seatId); });
+  }
+
+  /* ---------- 구역 추가 (O-04) ---------- */
+  document.getElementById('zoneAddForm').addEventListener('submit', async function (ev) {
+    ev.preventDefault();
+    const input = ev.target.zoneName;
+    const zoneName = input.value.trim();
+    if (!zoneName) { App.toast('구역 이름을 입력해 주세요', 'error'); return; }
+    const btn = ev.target.querySelector('button');
+    App.setBusy(btn, true);
+    try {
+      await App.api('/owner/cafes/' + encodeURIComponent(state.cafeId) + '/zones', { method: 'POST', body: { zoneName: zoneName } });
+      input.value = '';
+      App.toast('구역을 추가했습니다', 'ok');
+      await loadZones();
+    } catch (e) { App.handleError(e); }
+    finally { App.setBusy(btn, false); }
+  });
+
+  /* ---------- 구역·좌석 버튼 ---------- */
+  zoneList.addEventListener('click', async function (ev) {
+    const btn = ev.target.closest('[data-act]');
+    if (!btn) return;
+    const zoneEl = btn.closest('[data-zone]');
+    const zoneId = zoneEl.dataset.zone;
+    const zone = findZone(zoneId);
+    const row = btn.closest('[data-seat]');
+    const seat = row ? findSeat(zoneId, row.dataset.seat) : null;
+
+    switch (btn.dataset.act) {
+      case 'rename-zone': return startRename(zoneEl, zone);
+      case 'add-seat': return openSeatDialog(zoneId, null);
+      case 'edit-seat': return openSeatDialog(zoneId, seat);
+      case 'delete-zone': return deleteZone(btn, zone);
+      case 'delete-seat': return deleteSeat(btn, seat);
+      case 'toggle-seat': return toggleSeat(btn, seat);
+    }
+  });
+
+  /* 구역 이름 변경 (O-05) — 제목 자리를 입력칸으로 바꿈 */
+  function startRename(zoneEl, zone) {
+    const head = zoneEl.querySelector('[data-zone-head]');
+    head.innerHTML =
+      '<form class="input-with-btn" style="flex:1">' +
+        '<input type="text" name="zoneName" maxlength="50" aria-label="구역 이름" value="' + esc(zone.zoneName) + '">' +
+        '<button type="submit" class="btn btn--sm">저장</button>' +
+        '<button type="button" class="btn btn--ghost btn--sm" data-cancel>취소</button>' +
+      '</form>';
+    const f = head.querySelector('form');
+    f.zoneName.focus();
+    f.zoneName.select();
+    f.querySelector('[data-cancel]').addEventListener('click', renderZones);
+    f.addEventListener('submit', async function (ev) {
+      ev.preventDefault();
+      const name = f.zoneName.value.trim();
+      if (!name) return;
+      const b = f.querySelector('button[type="submit"]');
+      App.setBusy(b, true);
+      try {
+        await App.api('/owner/zones/' + encodeURIComponent(zone.zoneId), { method: 'PUT', body: { zoneName: name } });
+        App.toast('구역 이름을 바꿨습니다', 'ok');
+        await loadZones();
+      } catch (e) { App.handleError(e); App.setBusy(b, false); }
+    });
+  }
+
+  /* 구역 삭제 (O-06) — 좌석이 남아 있으면 확인 후 좌석 포함 삭제 (FR-05, FR-07) */
+  async function deleteZone(btn, zone) {
+    const n = (state.seatsByZone[zone.zoneId] || []).length;
+    const msg = n
+      ? '“' + zone.zoneName + '” 구역에 좌석 ' + n + '개가 있습니다.\n좌석까지 함께 삭제할까요?\n(앞으로 예약이 남은 좌석이 있으면 삭제되지 않습니다)'
+      : '“' + zone.zoneName + '” 구역을 삭제할까요?';
+    if (!window.confirm(msg)) return;
+    App.setBusy(btn, true);
+    try {
+      await App.api('/owner/zones/' + encodeURIComponent(zone.zoneId), { method: 'DELETE' });
+      App.toast('구역을 삭제했습니다', 'ok');
+      await loadZones();
+    } catch (e) { App.handleError(e); App.setBusy(btn, false); }
+  }
+
+  /* 좌석 삭제 (O-09) — 유효 예약이 남은 좌석은 DB 트리거가 막음(-20010) */
+  async function deleteSeat(btn, seat) {
+    if (!window.confirm('좌석 ' + seat.seatNum + '을(를) 삭제할까요?')) return;
+    App.setBusy(btn, true);
+    try {
+      await App.api('/owner/seats/' + encodeURIComponent(seat.seatId), { method: 'DELETE' });
+      App.toast('좌석을 삭제했습니다', 'ok');
+      await loadZones();
+    } catch (e) { App.handleError(e); App.setBusy(btn, false); }
+  }
+
+  function seatBody(seat, overrides) {
+    return Object.assign({
+      seatNum: seat.seatNum,
+      seatType: seat.seatType,
+      capacity: seat.capacity,
+      extraItem: seat.extraItem || null,
+      status: seat.currentStatus === '사용중지' ? '사용중지' : '빈자리'
+    }, overrides || {});
+  }
+
+  /* 사용중지 ↔ 사용재개 (O-08) */
+  async function toggleSeat(btn, seat) {
+    const off = seat.currentStatus === '사용중지';
+    App.setBusy(btn, true);
+    try {
+      await App.api('/owner/seats/' + encodeURIComponent(seat.seatId), {
+        method: 'PUT', body: seatBody(seat, { status: off ? '빈자리' : '사용중지' })
+      });
+      App.toast(off ? '좌석 사용을 재개했습니다' : '좌석을 사용중지했습니다', 'ok');
+      await loadZones();
+    } catch (e) { App.handleError(e); App.setBusy(btn, false); }
+  }
+
+  /* ---------- 좌석 등록·수정 대화상자 (O-07 / O-08) ---------- */
+  const dlg = document.getElementById('seatDialog');
+  const seatForm = document.getElementById('seatForm');
+  let dlgCtx = null;
+
+  function openSeatDialog(zoneId, seat) {
+    dlgCtx = { zoneId: zoneId, seat: seat };
+    const zone = findZone(zoneId);
+    document.getElementById('seatDialogTitle').textContent =
+      (seat ? '좌석 수정' : '좌석 등록') + ' · ' + (zone ? zone.zoneName : '');
+    seatForm.seatNum.value = seat ? seat.seatNum : '';
+    seatForm.seatType.value = seat ? seat.seatType || '' : '';
+    seatForm.capacity.value = seat ? seat.capacity : 1;
+    seatForm.extraItem.value = seat ? seat.extraItem || '' : '';
+    seatForm.seatOff.checked = !!seat && seat.currentStatus === '사용중지';
+    document.getElementById('disabledWrap').hidden = !seat;
+    App.showAlert('#seatError', null);
+    dlg.showModal();
+    seatForm.seatNum.focus();
+  }
+  document.getElementById('seatCancelBtn').addEventListener('click', function () { dlg.close(); });
+
+  seatForm.addEventListener('submit', async function (ev) {
+    ev.preventDefault();
+    const capacity = parseInt(seatForm.capacity.value, 10);
+    const body = {
+      seatNum: seatForm.seatNum.value.trim(),
+      seatType: seatForm.seatType.value.trim(),
+      capacity: capacity,
+      extraItem: seatForm.extraItem.value.trim() || null
+    };
+    let msg = null;
+    if (!body.seatNum) msg = '좌석번호를 입력해 주세요';
+    else if (!body.seatType) msg = '좌석 타입을 입력해 주세요';
+    else if (!(capacity >= 1)) msg = '적정인원은 1명 이상이어야 합니다';
+    if (msg) { App.showAlert('#seatError', msg); return; }
+
+    const btn = document.getElementById('seatSaveBtn');
+    App.setBusy(btn, true);
+    try {
+      if (dlgCtx.seat) {
+        body.status = seatForm.seatOff.checked ? '사용중지' : '빈자리';
+        await App.api('/owner/seats/' + encodeURIComponent(dlgCtx.seat.seatId), { method: 'PUT', body: body });
+        App.toast('좌석을 수정했습니다', 'ok');
+      } else {
+        await App.api('/owner/zones/' + encodeURIComponent(dlgCtx.zoneId) + '/seats', { method: 'POST', body: body });
+        App.toast('좌석을 등록했습니다', 'ok');
+      }
+      dlg.close();
+      await loadZones();
+    } catch (e) {
+      if (e.status === 401) return App.handleError(e);
+      App.showAlert('#seatError', e.message);
+    } finally {
+      App.setBusy(btn, false);
+    }
+  });
+
+  await loadCafes();
+});
+</script>
+</body>
+</html>

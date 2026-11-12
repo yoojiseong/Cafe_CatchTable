@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<!-- FR-20 매장 예약 현황
+     O-01 GET /owner/cafes, O-10 GET /owner/cafes/{cafeId}/reservations?date=,
+     O-11 GET /owner/reservations/{id}, C-03 GET /cafes/{cafeId}/seats(타임라인 행) -->
+<html lang="ko" xmlns:th="http://www.thymeleaf.org">
+<head th:replace="~{fragments/layout :: head('예약 현황')}"></head>
+<body data-auth="owner">
+<header th:replace="~{fragments/layout :: header}"></header>
+
+<main class="container">
+  <div class="page-head">
+    <div>
+      <h1>예약 현황</h1>
+      <p>선택한 날짜의 좌석별 예약을 시간 순으로 봅니다</p>
+    </div>
+  </div>
+
+  <section class="card" style="margin-bottom:20px">
+    <form id="filterForm" class="form-grid">
+      <div class="field"><label for="cafeId">카페</label><select id="cafeId" name="cafeId"></select></div>
+      <div class="field">
+        <label for="date">날짜</label>
+        <input type="date" id="date" name="date" required>
+      </div>
+      <div class="row">
+        <button type="button" class="btn btn--ghost" data-shift="-1" aria-label="전날">◀</button>
+        <button type="button" class="btn btn--ghost" data-shift="0">오늘</button>
+        <button type="button" class="btn btn--ghost" data-shift="1" aria-label="다음날">▶</button>
+        <button type="submit" class="btn">조회</button>
+      </div>
+    </form>
+  </section>
+
+  <section class="card" style="margin-bottom:20px">
+    <div class="card__head">
+      <h2 id="timelineTitle">타임라인</h2>
+      <div class="legend">
+        <span><i style="background:var(--st-booked)"></i>예약완료</span>
+        <span><i style="background:var(--st-inuse)"></i>이용중</span>
+        <span><i style="background:var(--st-done)"></i>이용완료</span>
+        <span><i style="background:var(--st-disabled-bg);border:1px solid var(--st-disabled)"></i>취소·노쇼</span>
+      </div>
+    </div>
+    <div class="scroll-x" id="timeline"><p class="muted">불러오는 중…</p></div>
+  </section>
+
+  <section class="card">
+    <div class="card__head"><h2>예약 목록</h2><span class="muted small" id="listCount"></span></div>
+    <div class="scroll-x" id="resvTable"></div>
+  </section>
+</main>
+
+<dialog id="detailDialog" aria-labelledby="detailTitle">
+  <div class="dialog__body">
+    <h2 id="detailTitle" style="margin:0">예약 상세</h2>
+    <div id="detailBody"></div>
+  </div>
+  <div class="dialog__foot"><button type="button" class="btn" id="detailClose">닫기</button></div>
+</dialog>
+
+<script th:inline="none">
+App.page(async function () {
+  const esc = App.esc;
+  const form = document.getElementById('filterForm');
+  const timeline = document.getElementById('timeline');
+  const resvTable = document.getElementById('resvTable');
+  let cafes = [];
+
+  cafes = await App.api('/owner/cafes') || [];
+  if (!cafes.length) {
+    document.querySelector('main').innerHTML =
+      '<div class="empty">등록된 카페가 없습니다. <a href="/owner/cafes">매장 관리</a>에서 카페를 먼저 등록하세요.</div>';
+    return;
+  }
+  form.cafeId.innerHTML = cafes.map(function (c) {
+    return '<option value="' + esc(c.cafeId) + '">' + esc(c.cafeName) + '</option>';
+  }).join('');
+  if (App.query('cafeId')) form.cafeId.value = App.query('cafeId');
+  form.date.value = App.query('date') || App.toApiDate(new Date());
+
+  function nameOf(r) { return r.memberName || r.name || r.memberId || '-'; }
+
+  async function load() {
+    const cafeId = form.cafeId.value;
+    const date = form.date.value;
+    const cafe = cafes.find(function (c) { return String(c.cafeId) === String(cafeId); });
+    const url = new URL(location.href);
+    url.searchParams.set('cafeId', cafeId);
+    url.searchParams.set('date', date);
+    history.replaceState(null, '', url);
+
+    timeline.innerHTML = '<p class="muted">불러오는 중…</p>';
+    resvTable.innerHTML = '';
+    const results = await Promise.all([
+      App.api('/cafes/' + encodeURIComponent(cafeId) + '/seats'),
+      App.api('/owner/cafes/' + encodeURIComponent(cafeId) + '/reservations', { query: { date: date } })
+    ]);
+    const seats = results[0] || [];
+    const resvs = (results[1] || []).slice().sort(function (a, b) {
+      return App.parseDt(a.startDt) - App.parseDt(b.startDt);
+    });
+
+    document.getElementById('timelineTitle').textContent = App.fmtDate(date) + ' 타임라인';
+    renderTimeline(cafe, date, seats, resvs);
+    renderTable(resvs);
+  }
+
+  /* ---------- 좌석 × 시간 타임라인 ---------- */
+  function renderTimeline(cafe, date, seats, resvs) {
+    const day = App.parseDt(date);
+    if (!App.isOperatingDay(cafe.operatingDays, day)) {
+      timeline.innerHTML = '<div class="alert alert--info">영업일이 아닙니다.</div>';
+      if (!resvs.length) return;
+    }
+    if (!seats.length) { timeline.innerHTML = '<div class="empty">등록된 좌석이 없습니다.</div>'; return; }
+
+    const open = App.atTime(day, cafe.startTime);
+    open.setMinutes(0, 0, 0);
+    const close = App.atTime(day, cafe.endTime);
+    if (close.getMinutes() > 0) close.setHours(close.getHours() + 1, 0, 0, 0);
+    const hours = Math.max(1, Math.round((close - open) / 3600000));
+    const total = close - open;
+
+    function pct(d) { return Math.min(100, Math.max(0, (d - open) / total * 100)); }
+
+    let html = '<div class="timeline" style="--hours:' + hours + '">';
+    html += '<div class="tl-row"><div class="tl-label"></div><div class="tl-hours">';
+    for (let i = 0; i < hours; i++) html += '<span>' + String(open.getHours() + i).padStart(2, '0') + ':00</span>';
+    html += '</div></div>';
+
+    const now = new Date();
+    const showNow = now >= open && now <= close;
+
+    seats.forEach(function (s) {
+      const mine = resvs.filter(function (r) { return String(r.seatId) === String(s.seatId) || (r.seatId == null && r.seatNum === s.seatNum); });
+      html += '<div class="tl-row"><div class="tl-label"><b>' + esc(s.seatNum) + '</b><span>' + esc(s.zoneName || '') + ' · ' + esc(s.capacity) + '인</span></div>' +
+        '<div class="tl-track">';
+      if (showNow) html += '<span class="tl-now" style="left:' + pct(now) + '%"></span>';
+      mine.forEach(function (r) {
+        const a = pct(App.parseDt(r.startDt)), b = pct(App.parseDt(r.endDt));
+        const label = nameOf(r) + ' · ' + r.visitorCount + '명';
+        html += '<button type="button" class="tl-bar tl-bar--' + App.statusClass(r.status) + '" data-id="' + esc(r.reservationId) + '"' +
+          ' style="left:' + a + '%;width:' + Math.max(b - a, 1) + '%"' +
+          ' title="' + esc(App.fmtTime(r.startDt) + '~' + App.fmtTime(r.endDt) + ' ' + label + ' (' + r.status + ')') + '">' +
+          esc(label) + '</button>';
+      });
+      html += '</div></div>';
+    });
+    html += '</div>';
+    timeline.innerHTML = (timeline.querySelector('.alert') ? timeline.innerHTML : '') + html;
+  }
+
+  /* ---------- 목록 표 ---------- */
+  function renderTable(resvs) {
+    const active = resvs.filter(function (r) { return r.status === '예약완료' || r.status === '이용중'; }).length;
+    document.getElementById('listCount').textContent = '전체 ' + resvs.length + '건 · 유효 ' + active + '건';
+    if (!resvs.length) { resvTable.innerHTML = '<div class="empty">이 날짜의 예약이 없습니다.</div>'; return; }
+    resvTable.innerHTML = '<table class="table"><thead><tr>' +
+      '<th>시간</th><th>좌석</th><th>예약자</th><th>연락처</th><th class="num">인원</th><th>상태</th><th></th>' +
+      '</tr></thead><tbody>' +
+      resvs.map(function (r) {
+        const faded = r.status === '예약취소' || r.status === '노쇼';
+        return '<tr' + (faded ? ' class="is-faded"' : '') + '>' +
+          '<td>' + App.fmtTime(r.startDt) + ' ~ ' + App.fmtTime(r.endDt) + '</td>' +
+          '<td>' + esc(r.seatNum || '') + (r.zoneName ? ' <span class="muted small">' + esc(r.zoneName) + '</span>' : '') + '</td>' +
+          '<td>' + esc(nameOf(r)) + '</td>' +
+          '<td>' + esc(r.phone || '-') + '</td>' +
+          '<td class="num">' + esc(r.visitorCount) + '명</td>' +
+          '<td>' + App.badge(r.status) + '</td>' +
+          '<td><button type="button" class="btn btn--ghost btn--sm" data-id="' + esc(r.reservationId) + '">상세</button></td>' +
+        '</tr>';
+      }).join('') + '</tbody></table>';
+  }
+
+  /* ---------- 예약자 상세 (O-11) ---------- */
+  const dlg = document.getElementById('detailDialog');
+  document.getElementById('detailClose').addEventListener('click', function () { dlg.close(); });
+
+  async function openDetail(id) {
+    const body = document.getElementById('detailBody');
+    body.innerHTML = '<p class="muted">불러오는 중…</p>';
+    dlg.showModal();
+    try {
+      const r = await App.api('/owner/reservations/' + encodeURIComponent(id));
+      body.innerHTML = '<dl class="summary">' +
+        '<dt>예약번호</dt><dd>' + esc(r.reservationId) + '</dd>' +
+        '<dt>상태</dt><dd>' + App.badge(r.status) + '</dd>' +
+        '<dt>예약자</dt><dd>' + esc(nameOf(r)) + (r.memberId ? ' <span class="muted small">(' + esc(r.memberId) + ')</span>' : '') + '</dd>' +
+        '<dt>연락처</dt><dd>' + esc(r.phone || '-') + '</dd>' +
+        '<dt>좌석</dt><dd>' + esc((r.zoneName ? r.zoneName + ' · ' : '') + (r.seatNum || '')) + '</dd>' +
+        '<dt>인원</dt><dd>' + esc(r.visitorCount) + '명</dd>' +
+        '<dt>예약 시간</dt><dd>' + esc(App.fmtRange(r.startDt, r.endDt)) + '</dd>' +
+        '<dt>실제 입실</dt><dd>' + esc(r.actualIn ? App.fmtDateTime(r.actualIn) : '-') + '</dd>' +
+        '<dt>실제 퇴실</dt><dd>' + esc(r.actualOut ? App.fmtDateTime(r.actualOut) : '-') + '</dd>' +
+        (r.createdAt ? '<dt>예약일시</dt><dd>' + esc(App.fmtDateTime(r.createdAt)) + '</dd>' : '') +
+      '</dl>';
+    } catch (e) {
+      if (e.status === 401) return App.handleError(e);
+      body.innerHTML = '<div class="alert alert--error">' + esc(e.message) + '</div>';
+    }
+  }
+
+  document.querySelector('main').addEventListener('click', function (ev) {
+    const b = ev.target.closest('.tl-bar, #resvTable [data-id]');
+    if (b) openDetail(b.dataset.id);
+  });
+
+  form.addEventListener('submit', function (ev) { ev.preventDefault(); load().catch(App.handleError); });
+  form.cafeId.addEventListener('change', function () { load().catch(App.handleError); });
+  form.querySelectorAll('[data-shift]').forEach(function (b) {
+    b.addEventListener('click', function () {
+      const n = +b.dataset.shift;
+      const base = n === 0 ? new Date() : App.addDays(App.parseDt(form.date.value) || new Date(), n);
+      form.date.value = App.toApiDate(base);
+      load().catch(App.handleError);
+    });
+  });
+
+  await load();
+});
+</script>
+</body>
+</html>
