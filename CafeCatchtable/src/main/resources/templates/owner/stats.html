@@ -53,11 +53,10 @@ App.page(async function () {
   }
   setRange(7);
 
-  /** 비율 값: 0~1 이면 ×100, 이미 백분율이면 그대로 */
+  /** SP_ZONE_STATS 의 OCCUPANCY_RATE·NOSHOW_RATE 는 이미 백분율(0~100)이다 */
   function pct(v) {
     if (v == null || isNaN(v)) return null;
-    v = Number(v);
-    return v <= 1 ? v * 100 : v;
+    return Number(v);
   }
   function pctText(v) { const p = pct(v); return p == null ? '-' : p.toFixed(1) + '%'; }
   function num(v, digits) { return v == null || isNaN(v) ? '-' : Number(v).toFixed(digits || 0); }
