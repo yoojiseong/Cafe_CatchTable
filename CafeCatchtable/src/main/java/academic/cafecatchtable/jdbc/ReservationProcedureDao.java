@@ -60,8 +60,8 @@ public class ReservationProcedureDao {
     public CreateReservationResult createReservation(String memberId, Long seatId,
                                                      LocalDateTime startDt, LocalDateTime endDt,
                                                      int visitorCount) {
-        // TODO: SP_CREATE_RESERVATION 호출 구현
-        throw new UnsupportedOperationException("SP_CREATE_RESERVATION 호출 미구현");
+        // 순수 JDBC 호출은 CreateReservationResult.createReservation() 에 구현되어 있다
+        return CreateReservationResult.createReservation(memberId, seatId, startDt, endDt, visitorCount);
     }
 
     /**

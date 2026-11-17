@@ -1,4 +1,4 @@
-package academic.cafecatchtable.api;
+package academic.cafecatchtable.controller;
 
 import academic.cafecatchtable.dto.CafeDto.CafeResponse;
 import academic.cafecatchtable.dto.CafeDto.SeatResponse;

@@ -746,3 +746,65 @@ SELECT NAME, TYPE, LINE, POSITION, TEXT
 
 프로시저 성공 결과 코드는 0입니다.
 */
+
+
+
+-- 회원 2명 (비밀번호: test1234)
+INSERT INTO MEMBER (MEMBER_ID, PASSWORD, NAME, PHONE)
+VALUES ('user01', '$2a$10$OjewBF9Fq5BCqjUsIVwYvO4qTp2ZN8PBDaiaen3EzVTBW/Xmau59K', '김회원', '010-1111-1111');
+INSERT INTO MEMBER (MEMBER_ID, PASSWORD, NAME, PHONE)
+VALUES ('owner01', '$2a$10$OjewBF9Fq5BCqjUsIVwYvO4qTp2ZN8PBDaiaen3EzVTBW/Xmau59K', '박점주', '010-2222-2222');
+
+-- 점주 등록 → TRG_OWNER_ROLE 이 owner01 의 ROLE 을 'OWNER' 로 바꿈
+INSERT INTO OWNER (OWNER_ID, BUSINESS_NUM) VALUES ('owner01', '123-45-00001');
+
+-- 카페 1개 (매일 09:00~23:00)
+INSERT INTO CAFE (OWNER_ID, CAFE_NAME, ADDRESS, PHONE, START_TIME, END_TIME, OPERATING_DAYS)
+VALUES ('owner01', '서면 전포 스터디랩', '부산 부산진구 전포대로 1', '051-000-0000',
+        '09:00', '23:00', 'Mon,Tue,Wed,Thu,Fri,Sat,Sun');
+
+-- 구역 2개
+INSERT INTO ZONE (CAFE_ID, ZONE_NAME)
+SELECT CAFE_ID, '오픈형 스터디존' FROM CAFE WHERE CAFE_NAME = '서면 전포 스터디랩';
+INSERT INTO ZONE (CAFE_ID, ZONE_NAME)
+SELECT CAFE_ID, '집중형 독서실존' FROM CAFE WHERE CAFE_NAME = '서면 전포 스터디랩';
+
+-- 좌석
+INSERT INTO SEAT (ZONE_ID, SEAT_NUM, SEAT_TYPE, CAPACITY, EXTRA_ITEM)
+SELECT ZONE_ID, 'O-01', '4인 테이블', 4, '콘센트 2구' FROM ZONE WHERE ZONE_NAME = '오픈형 스터디존';
+INSERT INTO SEAT (ZONE_ID, SEAT_NUM, SEAT_TYPE, CAPACITY, EXTRA_ITEM)
+SELECT ZONE_ID, 'O-02', '2인 테이블', 2, NULL FROM ZONE WHERE ZONE_NAME = '오픈형 스터디존';
+INSERT INTO SEAT (ZONE_ID, SEAT_NUM, SEAT_TYPE, CAPACITY, EXTRA_ITEM)
+SELECT ZONE_ID, 'F-01', '1인석', 1, '콘센트, 스탠드' FROM ZONE WHERE ZONE_NAME = '집중형 독서실존';
+
+COMMIT;
+
+-- 확인: owner01 의 ROLE 이 OWNER 로 바뀌었는지
+SELECT MEMBER_ID, ROLE FROM MEMBER;
+
+SET SERVEROUTPUT ON;
+DECLARE
+    v_seat_id SEAT.SEAT_ID%TYPE;
+    v_resv_id NUMBER;
+    v_code    NUMBER;
+BEGIN
+    SELECT SEAT_ID INTO v_seat_id FROM SEAT WHERE SEAT_NUM = 'O-01' AND ROWNUM = 1;
+
+    SP_CREATE_RESERVATION(
+        p_member_id      => 'user01',
+        p_seat_id        => v_seat_id,
+        p_start_dt       => TRUNC(SYSDATE) + 1 + 14/24,
+        p_end_dt         => TRUNC(SYSDATE) + 1 + 16/24,
+        p_visitor_count  => 2,
+        p_reservation_id => v_resv_id,
+        p_result_code    => v_code
+    );
+    DBMS_OUTPUT.PUT_LINE('reservation_id = ' || v_resv_id || ', result_code = ' || v_code);
+END;
+/
+-- 기대 결과: result_code = 0. 같은 블록을 한 번 더 실행하면 -20004(시간 중복)
+
+SELECT * FROM RESERVATION;
+SELECT * FROM RESERVATION_LOG;   -- TRG_RESV_HISTORY 가 'INSERT' 이력을 남김
+
+

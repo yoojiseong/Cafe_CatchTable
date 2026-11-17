@@ -9,6 +9,7 @@ import org.springframework.validation.FieldError;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
+import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.method.annotation.HandlerMethodValidationException;
 import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
@@ -21,7 +22,7 @@ import java.sql.SQLException;
  * - SQLException(ORA-200xx) : 트리거 RAISE_APPLICATION_ERROR (예: TRG_SEAT_DELETE_GUARD → -20010)
  *                             JPA·JdbcTemplate 이 감싼 예외도 원인을 따라가 getErrorCode() 로 찾는다.
  */
-@RestControllerAdvice(basePackages = "academic.cafecatchtable.api")
+@RestControllerAdvice(annotations = RestController.class)
 public class GlobalExceptionHandler {
 
     private static final Logger log = LoggerFactory.getLogger(GlobalExceptionHandler.class);

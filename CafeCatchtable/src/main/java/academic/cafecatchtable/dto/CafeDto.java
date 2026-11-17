@@ -2,7 +2,7 @@ package academic.cafecatchtable.dto;
 
 import academic.cafecatchtable.domain.Cafe;
 import academic.cafecatchtable.domain.Zone;
-import academic.cafecatchtable.service.OperatingDays;
+import academic.cafecatchtable.common.OperatingDays;
 import com.fasterxml.jackson.annotation.JsonFormat;
 import com.fasterxml.jackson.annotation.JsonInclude;
 

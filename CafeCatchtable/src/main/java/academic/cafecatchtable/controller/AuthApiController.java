@@ -1,4 +1,4 @@
-package academic.cafecatchtable.api;
+package academic.cafecatchtable.controller;
 
 import academic.cafecatchtable.auth.SessionUser;
 import academic.cafecatchtable.dto.AuthDto.*;

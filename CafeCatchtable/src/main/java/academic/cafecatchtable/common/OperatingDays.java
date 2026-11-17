@@ -1,4 +1,4 @@
-package academic.cafecatchtable.service;
+package academic.cafecatchtable.common;
 
 import java.time.DayOfWeek;
 import java.util.Arrays;

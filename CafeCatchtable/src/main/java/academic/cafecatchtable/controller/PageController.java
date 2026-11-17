@@ -1,4 +1,4 @@
-package academic.cafecatchtable.web;
+package academic.cafecatchtable.controller;
 
 import org.springframework.stereotype.Controller;
 import org.springframework.web.bind.annotation.GetMapping;
