@@ -28,11 +28,11 @@ import java.util.Optional;
  * JdbcTemplate 은 진행 중인 트랜잭션의 커넥션을 그대로 쓰고, 커넥션·CallableStatement 를 알아서 닫는다.
  */
 @Repository
-public class OwnerQueryDao {
+public class OwnerProcedureCaller {
 
     private final JdbcTemplate jdbcTemplate;
 
-    public OwnerQueryDao(JdbcTemplate jdbcTemplate) {
+    public OwnerProcedureCaller(JdbcTemplate jdbcTemplate) {
         this.jdbcTemplate = jdbcTemplate;
     }
 

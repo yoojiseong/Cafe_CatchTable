@@ -9,8 +9,8 @@ import academic.cafecatchtable.common.ErrorCode;
 import academic.cafecatchtable.dto.OwnerDto.OwnerReservationResponse;
 import academic.cafecatchtable.dto.OwnerDto.PopularSeat;
 import academic.cafecatchtable.dto.OwnerDto.StatsResponse;
-import academic.cafecatchtable.jdbc.OwnerQueryDao;
-import academic.cafecatchtable.jdbc.StatsProcedureDao;
+import academic.cafecatchtable.jdbc.OwnerProcedureCaller;
+import academic.cafecatchtable.jdbc.StatsProcedureCaller;
 import academic.cafecatchtable.jdbc.ZoneStatRow;
 import org.springframework.stereotype.Service;
 
@@ -25,15 +25,15 @@ public class OwnerReservationServiceImpl implements OwnerReservationService {
     private static final int DEFAULT_STATS_DAYS = 7;
 
     private final OwnerStoreService storeService;
-    private final OwnerQueryDao ownerQueryDao;
-    private final StatsProcedureDao statsProcedureDao;
+    private final OwnerProcedureCaller ownerProcedureCaller;
+    private final StatsProcedureCaller statsProcedureCaller;
     private final DbClock clock;
 
-    public OwnerReservationServiceImpl(OwnerStoreService storeService, OwnerQueryDao ownerQueryDao,
-                                   StatsProcedureDao statsProcedureDao, DbClock clock) {
+    public OwnerReservationServiceImpl(OwnerStoreService storeService, OwnerProcedureCaller ownerProcedureCaller,
+                                   StatsProcedureCaller statsProcedureCaller, DbClock clock) {
         this.storeService = storeService;
-        this.ownerQueryDao = ownerQueryDao;
-        this.statsProcedureDao = statsProcedureDao;
+        this.ownerProcedureCaller = ownerProcedureCaller;
+        this.statsProcedureCaller = statsProcedureCaller;
         this.clock = clock;
     }
 
@@ -42,13 +42,13 @@ public class OwnerReservationServiceImpl implements OwnerReservationService {
     public List<OwnerReservationResponse> daily(String ownerId, Long cafeId, LocalDate date) {
         storeService.loadOwnedCafe(ownerId, cafeId);
         LocalDate day = date != null ? date : clock.now().toLocalDate();
-        return ownerQueryDao.findDailyReservations(cafeId, day);
+        return ownerProcedureCaller.findDailyReservations(cafeId, day);
     }
 
     /** O-11 예약자 상세. 다른 점주 카페의 예약이면 403 */
     @Override
     public OwnerReservationResponse detail(String ownerId, Long reservationId) {
-        OwnerQueryDao.OwnedReservation found = ownerQueryDao.findReservationWithOwner(reservationId)
+        OwnerProcedureCaller.OwnedReservation found = ownerProcedureCaller.findReservationWithOwner(reservationId)
                 .orElseThrow(() -> new ApiException(ErrorCode.NOT_FOUND));
         if (!ownerId.equals(found.ownerId())) {
             throw new ApiException(ErrorCode.FORBIDDEN);
@@ -58,8 +58,8 @@ public class OwnerReservationServiceImpl implements OwnerReservationService {
 
     /**
      * O-12 구역 통계 + 인기 좌석 TOP 3
-     *  - 구역별 점유율·회전율·평균 체류분·노쇼율 → SP_ZONE_STATS (StatsProcedureDao)
-     *  - 인기 좌석 TOP 3                       → SELECT (OwnerQueryDao)
+     *  - 구역별 점유율·회전율·평균 체류분·노쇼율 → SP_ZONE_STATS (StatsProcedureCaller)
+     *  - 인기 좌석 TOP 3                       → SELECT (OwnerProcedureCaller)
      */
     @Override
     public StatsResponse stats(String ownerId, Long cafeId, LocalDate from, LocalDate to) {
@@ -70,9 +70,9 @@ public class OwnerReservationServiceImpl implements OwnerReservationService {
             throw new ApiException(ErrorCode.VALIDATION_FAILED, "시작일이 종료일보다 늦습니다");
         }
         // 프로시저의 p_to 는 미포함 경계이므로 종료일 다음날 00:00 을 넘긴다
-        List<ZoneStatRow> zones = statsProcedureDao.getZoneStats(
+        List<ZoneStatRow> zones = statsProcedureCaller.getZoneStats(
                 cafeId, start.atStartOfDay(), end.plusDays(1).atStartOfDay());
-        List<PopularSeat> topSeats = ownerQueryDao.findTopSeats(cafeId, start, end);
+        List<PopularSeat> topSeats = ownerProcedureCaller.findTopSeats(cafeId, start, end);
         return new StatsResponse(cafeId, start, end, zones, topSeats);
     }
 }

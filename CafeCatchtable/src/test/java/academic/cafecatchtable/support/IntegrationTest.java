@@ -1,9 +1,9 @@
 package academic.cafecatchtable.support;
 
 import academic.cafecatchtable.auth.SessionUser;
-import academic.cafecatchtable.jdbc.ReservationProcedureDao;
-import academic.cafecatchtable.jdbc.SlotProcedureDao;
-import academic.cafecatchtable.jdbc.StatsProcedureDao;
+import academic.cafecatchtable.jdbc.ReservationProcedureCaller;
+import academic.cafecatchtable.jdbc.SlotProcedureCaller;
+import academic.cafecatchtable.jdbc.StatsProcedureCaller;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.condition.EnabledIf;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -25,7 +25,7 @@ import org.springframework.transaction.annotation.Transactional;
  * - 테스트용 회원·카페·좌석·예약은 {@link Fixtures} 가 매번 새로 만든다. 더미 데이터 내용에 의존하지 않는다.
  * - 저장프로시저 호출 클래스 3개는 아직 미구현이라 Mockito 로 대체한다.
  *   서비스가 프로시저에 무엇을 넘기고, 돌아온 결과 코드를 어떤 HTTP 응답으로 바꾸는지를 검증한다.
- *   (프로시저 자체 검증은 ProcedureDaoContractTest 참고)
+ *   (프로시저 자체 검증은 ProcedureCallerContractTest 참고)
  */
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -40,13 +40,13 @@ public abstract class IntegrationTest {
     protected JdbcTemplate jdbc;
 
     @MockitoBean
-    protected ReservationProcedureDao reservationProcedureDao;
+    protected ReservationProcedureCaller reservationProcedureCaller;
 
     @MockitoBean
-    protected SlotProcedureDao slotProcedureDao;
+    protected SlotProcedureCaller slotProcedureCaller;
 
     @MockitoBean
-    protected StatsProcedureDao statsProcedureDao;
+    protected StatsProcedureCaller statsProcedureCaller;
 
     protected Fixtures fx;
 

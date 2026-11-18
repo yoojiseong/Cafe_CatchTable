@@ -31,7 +31,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 /**
  * 예약·이용 API (R-01 ~ R-06)
- * 생성·취소·체크인·퇴실은 프로시저 호출 클래스(ReservationProcedureDao)를 Mock 으로 두고
+ * 생성·취소·체크인·퇴실은 프로시저 호출 클래스(ReservationProcedureCaller)를 Mock 으로 두고
  * 서비스의 입력 검증, 프로시저에 넘기는 값, 결과 코드 → HTTP 응답 변환을 검증한다.
  */
 class ReservationApiTest extends IntegrationTest {
@@ -61,7 +61,7 @@ class ReservationApiTest extends IntegrationTest {
             LocalDateTime start = LocalDateTime.of(2030, 1, 2, 10, 0);
             // 프로시저가 INSERT 했다고 가정하고 같은 내용의 행을 미리 만들어 둔다
             long created = fx.reservationAt(Fixtures.USER, seatId, "2030-01-02 10:00", "2030-01-02 11:30", 2, "예약완료");
-            when(reservationProcedureDao.createReservation(Fixtures.USER, seatId, start, start.plusMinutes(90), 2))
+            when(reservationProcedureCaller.createReservation(Fixtures.USER, seatId, start, start.plusMinutes(90), 2))
                     .thenReturn(new CreateReservationResult(created, 0));
 
             mvc.perform(post("/api/reservations").session(userSession()).contentType(MediaType.APPLICATION_JSON)
@@ -76,7 +76,7 @@ class ReservationApiTest extends IntegrationTest {
                     .andExpect(jsonPath("$.endDt").value("2030-01-02T11:30:00"))
                     .andExpect(jsonPath("$.status").value("예약완료"));
 
-            verify(reservationProcedureDao).createReservation(Fixtures.USER, seatId, start, start.plusMinutes(90), 2);
+            verify(reservationProcedureCaller).createReservation(Fixtures.USER, seatId, start, start.plusMinutes(90), 2);
         }
 
         @Test
@@ -90,7 +90,7 @@ class ReservationApiTest extends IntegrationTest {
         }
 
         private void assertCreateFails(int resultCode, int httpStatus, String code) throws Exception {
-            when(reservationProcedureDao.createReservation(anyString(), anyLong(), any(), any(), anyInt()))
+            when(reservationProcedureCaller.createReservation(anyString(), anyLong(), any(), any(), anyInt()))
                     .thenReturn(new CreateReservationResult(null, resultCode));
             mvc.perform(post("/api/reservations").session(userSession()).contentType(MediaType.APPLICATION_JSON)
                             .content(createBody(seatId, "2030-01-02T10:00:00", 60, 1)))
@@ -101,13 +101,13 @@ class ReservationApiTest extends IntegrationTest {
 
         @Test
         void 알_수_없는_결과코드나_예약번호가_없으면_500() throws Exception {
-            when(reservationProcedureDao.createReservation(anyString(), anyLong(), any(), any(), anyInt()))
+            when(reservationProcedureCaller.createReservation(anyString(), anyLong(), any(), any(), anyInt()))
                     .thenReturn(new CreateReservationResult(null, -1));
             mvc.perform(post("/api/reservations").session(userSession()).contentType(MediaType.APPLICATION_JSON)
                             .content(createBody(seatId, "2030-01-02T10:00:00", 60, 1)))
                     .andExpect(status().isInternalServerError());
 
-            when(reservationProcedureDao.createReservation(anyString(), anyLong(), any(), any(), anyInt()))
+            when(reservationProcedureCaller.createReservation(anyString(), anyLong(), any(), any(), anyInt()))
                     .thenReturn(new CreateReservationResult(null, 0));
             mvc.perform(post("/api/reservations").session(userSession()).contentType(MediaType.APPLICATION_JSON)
                             .content(createBody(seatId, "2030-01-02T10:00:00", 60, 1)))
@@ -122,7 +122,7 @@ class ReservationApiTest extends IntegrationTest {
                         .andExpect(status().isBadRequest())
                         .andExpect(jsonPath("$.code").value("VALIDATION_FAILED"));
             }
-            verify(reservationProcedureDao, never()).createReservation(anyString(), anyLong(), any(), any(), anyInt());
+            verify(reservationProcedureCaller, never()).createReservation(anyString(), anyLong(), any(), any(), anyInt());
         }
 
         @Test
@@ -229,38 +229,38 @@ class ReservationApiTest extends IntegrationTest {
 
         @Test
         void 성공하면_프로시저_실행_후_상태를_다시_읽어_돌려준다() throws Exception {
-            when(reservationProcedureDao.cancelReservation(resvId, Fixtures.USER)).thenReturn(0);
+            when(reservationProcedureCaller.cancelReservation(resvId, Fixtures.USER)).thenReturn(0);
             mvc.perform(post("/api/reservations/{id}/cancel", resvId).session(userSession()))
                     .andExpect(status().isOk())
                     .andExpect(jsonPath("$.reservationId").value(resvId))
                     .andExpect(jsonPath("$.status").value("예약완료"));   // Mock 이라 실제 변경은 없음
-            verify(reservationProcedureDao).cancelReservation(resvId, Fixtures.USER);
+            verify(reservationProcedureCaller).cancelReservation(resvId, Fixtures.USER);
 
-            when(reservationProcedureDao.checkIn(resvId, Fixtures.USER)).thenReturn(0);
+            when(reservationProcedureCaller.checkIn(resvId, Fixtures.USER)).thenReturn(0);
             mvc.perform(post("/api/reservations/{id}/check-in", resvId).session(userSession()))
                     .andExpect(status().isOk());
-            verify(reservationProcedureDao).checkIn(resvId, Fixtures.USER);
+            verify(reservationProcedureCaller).checkIn(resvId, Fixtures.USER);
 
-            when(reservationProcedureDao.checkOut(resvId, Fixtures.USER)).thenReturn(0);
+            when(reservationProcedureCaller.checkOut(resvId, Fixtures.USER)).thenReturn(0);
             mvc.perform(post("/api/reservations/{id}/check-out", resvId).session(userSession()))
                     .andExpect(status().isOk());
-            verify(reservationProcedureDao).checkOut(resvId, Fixtures.USER);
+            verify(reservationProcedureCaller).checkOut(resvId, Fixtures.USER);
         }
 
         @Test
         void 프로시저_결과코드를_오류_응답으로_바꾼다() throws Exception {
-            when(reservationProcedureDao.cancelReservation(resvId, Fixtures.USER)).thenReturn(-20007);
+            when(reservationProcedureCaller.cancelReservation(resvId, Fixtures.USER)).thenReturn(-20007);
             mvc.perform(post("/api/reservations/{id}/cancel", resvId).session(userSession()))
                     .andExpect(status().is(422))
                     .andExpect(jsonPath("$.code").value("INVALID_STATE"))
                     .andExpect(jsonPath("$.dbCode").value(-20007));
 
-            when(reservationProcedureDao.checkIn(resvId, Fixtures.USER)).thenReturn(-20006);
+            when(reservationProcedureCaller.checkIn(resvId, Fixtures.USER)).thenReturn(-20006);
             mvc.perform(post("/api/reservations/{id}/check-in", resvId).session(userSession()))
                     .andExpect(status().is(422))
                     .andExpect(jsonPath("$.code").value("CHECKIN_WINDOW_CLOSED"));
 
-            when(reservationProcedureDao.checkOut(resvId, Fixtures.USER)).thenReturn(-20008);
+            when(reservationProcedureCaller.checkOut(resvId, Fixtures.USER)).thenReturn(-20008);
             mvc.perform(post("/api/reservations/{id}/check-out", resvId).session(userSession()))
                     .andExpect(status().isForbidden())
                     .andExpect(jsonPath("$.code").value("NOT_OWNER_OF_RESV"))
@@ -275,14 +275,14 @@ class ReservationApiTest extends IntegrationTest {
                     .andExpect(status().isNotFound());
             mvc.perform(post("/api/reservations/{id}/check-out", 987654321L).session(userSession()))
                     .andExpect(status().isNotFound());
-            verify(reservationProcedureDao, never()).cancelReservation(anyLong(), anyString());
-            verify(reservationProcedureDao, never()).checkIn(anyLong(), anyString());
-            verify(reservationProcedureDao, never()).checkOut(anyLong(), anyString());
+            verify(reservationProcedureCaller, never()).cancelReservation(anyLong(), anyString());
+            verify(reservationProcedureCaller, never()).checkIn(anyLong(), anyString());
+            verify(reservationProcedureCaller, never()).checkOut(anyLong(), anyString());
         }
 
         @Test
         void 프로시저_호출_클래스가_미구현이면_501() throws Exception {
-            when(reservationProcedureDao.cancelReservation(anyLong(), anyString()))
+            when(reservationProcedureCaller.cancelReservation(anyLong(), anyString()))
                     .thenThrow(new UnsupportedOperationException("미구현"));
             mvc.perform(post("/api/reservations/{id}/cancel", resvId).session(userSession()))
                     .andExpect(status().isNotImplemented());

@@ -11,11 +11,11 @@ import java.util.List;
  * 사용처: C-04 GET /api/cafes/{cafeId}/slots (FR-11, 질의 4)
  */
 @Repository
-public class SlotProcedureDao {
+public class SlotProcedureCaller {
 
     private final DataSource dataSource;
 
-    public SlotProcedureDao(DataSource dataSource) {
+    public SlotProcedureCaller(DataSource dataSource) {
         this.dataSource = dataSource;
     }
 

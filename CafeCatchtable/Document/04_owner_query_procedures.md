@@ -1,6 +1,6 @@
 # 점주 조회 저장 프로시저 (O-10 · O-11 · O-12)
 
-`jdbc/OwnerQueryDao` 가 Java 에서 직접 실행하던 SELECT 3개를 Oracle 저장 프로시저로 옮긴 것입니다.
+`jdbc/OwnerProcedureCaller` 가 Java 에서 직접 실행하던 SELECT 3개를 Oracle 저장 프로시저로 옮긴 것입니다.
 Java 는 이제 SQL 을 갖고 있지 않고, 아래 프로시저를 `{call ...}` 로 호출해 커서(SYS_REFCURSOR)만 읽습니다.
 
 ## 요약
@@ -141,7 +141,7 @@ EXEC SP_POPULAR_SEATS(1, DATE '2026-11-01', DATE '2026-12-01', :rc);
 PRINT rc
 ```
 
-## Java 호출 (`jdbc/OwnerQueryDao`)
+## Java 호출 (`jdbc/OwnerProcedureCaller`)
 
 ```java
 {call SP_OWNER_DAILY_RESERVATIONS(?, ?, ?)}   // 1 cafeId, 2 Timestamp(날짜 00:00), 3 OUT Types.REF_CURSOR

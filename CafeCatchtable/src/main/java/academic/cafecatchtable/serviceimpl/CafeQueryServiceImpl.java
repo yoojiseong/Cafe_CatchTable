@@ -9,7 +9,7 @@ import academic.cafecatchtable.common.ErrorCode;
 import academic.cafecatchtable.common.Status;
 import academic.cafecatchtable.domain.Cafe;
 import academic.cafecatchtable.dto.CafeDto.*;
-import academic.cafecatchtable.jdbc.SlotProcedureDao;
+import academic.cafecatchtable.jdbc.SlotProcedureCaller;
 import academic.cafecatchtable.jdbc.SlotRow;
 import academic.cafecatchtable.repository.CafeRepository;
 import academic.cafecatchtable.repository.ReservationRepository;
@@ -32,17 +32,17 @@ public class CafeQueryServiceImpl implements CafeQueryService {
     private final ZoneRepository zoneRepository;
     private final SeatRepository seatRepository;
     private final ReservationRepository reservationRepository;
-    private final SlotProcedureDao slotProcedureDao;
+    private final SlotProcedureCaller slotProcedureCaller;
     private final DbClock clock;
 
     public CafeQueryServiceImpl(CafeRepository cafeRepository, ZoneRepository zoneRepository,
                             SeatRepository seatRepository, ReservationRepository reservationRepository,
-                            SlotProcedureDao slotProcedureDao, DbClock clock) {
+                            SlotProcedureCaller slotProcedureCaller, DbClock clock) {
         this.cafeRepository = cafeRepository;
         this.zoneRepository = zoneRepository;
         this.seatRepository = seatRepository;
         this.reservationRepository = reservationRepository;
-        this.slotProcedureDao = slotProcedureDao;
+        this.slotProcedureCaller = slotProcedureCaller;
         this.clock = clock;
     }
 
@@ -91,7 +91,7 @@ public class CafeQueryServiceImpl implements CafeQueryService {
     }
 
     /**
-     * C-04 예약 가능 시간대 (FR-11) → SP_GET_AVAILABLE_SLOTS (SlotProcedureDao)
+     * C-04 예약 가능 시간대 (FR-11) → SP_GET_AVAILABLE_SLOTS (SlotProcedureCaller)
      * 휴무일·기간 밖은 프로시저 호출 전에 걸러 422 로 응답한다.
      */
     @Override
@@ -108,7 +108,7 @@ public class CafeQueryServiceImpl implements CafeQueryService {
             throw new ApiException(ErrorCode.OUT_OF_BUSINESS_HOURS, "영업일이 아닙니다");
         }
 
-        List<SlotRow> rows = slotProcedureDao.getAvailableSlots(cafeId, date, visitors);
+        List<SlotRow> rows = slotProcedureCaller.getAvailableSlots(cafeId, date, visitors);
 
         // 커서 결과를 좌석별로 묶는다 (프로시저가 준 순서 유지)
         Map<Long, SeatSlots> bySeat = new LinkedHashMap<>();

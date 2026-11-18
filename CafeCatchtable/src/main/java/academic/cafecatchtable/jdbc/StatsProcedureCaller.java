@@ -9,14 +9,14 @@ import java.util.List;
 /**
  * 구역 통계 프로시저 호출 (순수 JDBC) — 구현은 직접 작성.
  * 사용처: O-12 GET /api/owner/cafes/{cafeId}/stats (FR-21, 질의 6·13)
- * 인기 좌석 TOP 3(질의 14)는 프로시저가 아니라 OwnerQueryDao 의 SELECT 로 구현돼 있다.
+ * 인기 좌석 TOP 3(질의 14)는 프로시저가 아니라 OwnerProcedureCaller 의 SELECT 로 구현돼 있다.
  */
 @Repository
-public class StatsProcedureDao {
+public class StatsProcedureCaller {
 
     private final DataSource dataSource;
 
-    public StatsProcedureDao(DataSource dataSource) {
+    public StatsProcedureCaller(DataSource dataSource) {
         this.dataSource = dataSource;
     }
 

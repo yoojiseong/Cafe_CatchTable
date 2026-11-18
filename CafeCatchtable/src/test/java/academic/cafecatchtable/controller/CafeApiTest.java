@@ -176,7 +176,7 @@ class CafeApiTest extends IntegrationTest {
         @Test
         void 프로시저_결과를_좌석별로_묶어_돌려준다() throws Exception {
             LocalDate date = today().plusDays(1);
-            when(slotProcedureDao.getAvailableSlots(cafeId, date, 2)).thenReturn(List.of(
+            when(slotProcedureCaller.getAvailableSlots(cafeId, date, 2)).thenReturn(List.of(
                     new SlotRow(seat2, "H-1", "홀", date.atTime(9, 0), true),
                     new SlotRow(seat2, "H-1", "홀", date.atTime(9, 30), false),
                     new SlotRow(seat4, "H-2", "홀", date.atTime(9, 0), true)));
@@ -197,11 +197,11 @@ class CafeApiTest extends IntegrationTest {
         @Test
         void visitors를_생략하면_1명으로_조회한다() throws Exception {
             LocalDate date = today();
-            when(slotProcedureDao.getAvailableSlots(anyLong(), any(), anyInt())).thenReturn(List.of());
+            when(slotProcedureCaller.getAvailableSlots(anyLong(), any(), anyInt())).thenReturn(List.of());
             mvc.perform(get("/api/cafes/{id}/slots", cafeId).session(userSession()).param("date", date.toString()))
                     .andExpect(status().isOk())
                     .andExpect(jsonPath("$.seats", hasSize(0)));
-            verify(slotProcedureDao).getAvailableSlots(cafeId, date, 1);
+            verify(slotProcedureCaller).getAvailableSlots(cafeId, date, 1);
         }
 
         @Test
@@ -214,7 +214,7 @@ class CafeApiTest extends IntegrationTest {
             mvc.perform(get("/api/cafes/{id}/slots", cafeId).session(userSession())
                             .param("date", today().minusDays(1).toString()))
                     .andExpect(status().is(422));
-            verify(slotProcedureDao, never()).getAvailableSlots(anyLong(), any(), anyInt());
+            verify(slotProcedureCaller, never()).getAvailableSlots(anyLong(), any(), anyInt());
         }
 
         @Test
@@ -243,7 +243,7 @@ class CafeApiTest extends IntegrationTest {
 
         @Test
         void 프로시저_호출_클래스가_미구현이면_501() throws Exception {
-            when(slotProcedureDao.getAvailableSlots(anyLong(), any(), anyInt()))
+            when(slotProcedureCaller.getAvailableSlots(anyLong(), any(), anyInt()))
                     .thenThrow(new UnsupportedOperationException("SP_GET_AVAILABLE_SLOTS 호출 미구현"));
             mvc.perform(get("/api/cafes/{id}/slots", cafeId).session(userSession()).param("date", today().toString()))
                     .andExpect(status().isNotImplemented())
@@ -254,7 +254,7 @@ class CafeApiTest extends IntegrationTest {
         void 없는_카페면_404() throws Exception {
             mvc.perform(get("/api/cafes/{id}/slots", 987654321L).session(userSession()).param("date", today().toString()))
                     .andExpect(status().isNotFound());
-            verify(slotProcedureDao, never()).getAvailableSlots(eq(987654321L), any(), anyInt());
+            verify(slotProcedureCaller, never()).getAvailableSlots(eq(987654321L), any(), anyInt());
         }
     }
 }

@@ -406,7 +406,7 @@ class OwnerApiTest extends IntegrationTest {
 
             LocalDate from = LocalDate.of(2030, 4, 1);
             LocalDate to = LocalDate.of(2030, 4, 7);
-            when(statsProcedureDao.getZoneStats(cafeId, from.atStartOfDay(), to.plusDays(1).atStartOfDay()))
+            when(statsProcedureCaller.getZoneStats(cafeId, from.atStartOfDay(), to.plusDays(1).atStartOfDay()))
                     .thenReturn(List.of(new ZoneStatRow("1층", 7L, 60.0, 12.5, 1.75, 14.29)));
 
             mvc.perform(get("/api/owner/cafes/{id}/stats", cafeId).session(ownerSession())
@@ -425,13 +425,13 @@ class OwnerApiTest extends IntegrationTest {
         @Test
         void 기간을_생략하면_오늘까지_최근_7일() throws Exception {
             LocalDate today = jdbc.queryForObject("SELECT TRUNC(SYSDATE) FROM DUAL", java.sql.Date.class).toLocalDate();
-            when(statsProcedureDao.getZoneStats(anyLong(), any(), any())).thenReturn(List.of());
+            when(statsProcedureCaller.getZoneStats(anyLong(), any(), any())).thenReturn(List.of());
 
             mvc.perform(get("/api/owner/cafes/{id}/stats", cafeId).session(ownerSession()))
                     .andExpect(status().isOk())
                     .andExpect(jsonPath("$.from").value(today.minusDays(6).toString()))
                     .andExpect(jsonPath("$.to").value(today.toString()));
-            verify(statsProcedureDao).getZoneStats(cafeId, today.minusDays(6).atStartOfDay(), today.plusDays(1).atStartOfDay());
+            verify(statsProcedureCaller).getZoneStats(cafeId, today.minusDays(6).atStartOfDay(), today.plusDays(1).atStartOfDay());
         }
 
         @Test
@@ -439,7 +439,7 @@ class OwnerApiTest extends IntegrationTest {
             mvc.perform(get("/api/owner/cafes/{id}/stats", cafeId).session(ownerSession())
                             .param("from", "2030-04-08").param("to", "2030-04-07"))
                     .andExpect(status().isBadRequest());
-            verify(statsProcedureDao, never()).getZoneStats(anyLong(), any(), any());
+            verify(statsProcedureCaller, never()).getZoneStats(anyLong(), any(), any());
         }
     }
 }

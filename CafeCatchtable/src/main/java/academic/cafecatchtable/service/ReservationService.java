@@ -8,7 +8,7 @@ import java.util.List;
 
 /**
  * 예약·이용 (FR-12 ~ FR-17, FR-19 / R-01 ~ R-06). 구현: serviceimpl.ReservationServiceImpl
- * 생성·취소·체크인·퇴실은 저장프로시저(ReservationProcedureDao)로만 처리한다.
+ * 생성·취소·체크인·퇴실은 저장프로시저(ReservationProcedureCaller)로만 처리한다.
  */
 public interface ReservationService {
 

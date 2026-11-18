@@ -25,7 +25,7 @@ import static org.junit.jupiter.api.Assumptions.abort;
 /**
  * 프로시저 호출 클래스(순수 JDBC) 계약 테스트.
  *
- * ReservationProcedureDao / SlotProcedureDao / StatsProcedureDao 를 구현하면 실제 프로시저를 불러 검증한다.
+ * ReservationProcedureCaller / SlotProcedureCaller / StatsProcedureCaller 를 구현하면 실제 프로시저를 불러 검증한다.
  * 아직 UnsupportedOperationException 을 던지는 메서드의 테스트는 "건너뜀(aborted)"으로 표시된다.
  *
  * 주의: 프로시저가 직접 COMMIT 하므로 이 테스트는 롤백 방식을 쓸 수 없다.
@@ -33,16 +33,16 @@ import static org.junit.jupiter.api.Assumptions.abort;
  */
 @SpringBootTest
 @EnabledIf("academic.cafecatchtable.support.OracleAvailable#isUp")
-class ProcedureDaoContractTest {
+class ProcedureCallerContractTest {
 
     private static final String USER = "zzcuser01";
     private static final String OTHER_USER = "zzcuser02";
     private static final String OWNER = "zzcowner01";
     private static final String HASH = "$2a$10$OjewBF9Fq5BCqjUsIVwYvO4qTp2ZN8PBDaiaen3EzVTBW/Xmau59K";
 
-    @Autowired ReservationProcedureDao reservationDao;
-    @Autowired SlotProcedureDao slotDao;
-    @Autowired StatsProcedureDao statsDao;
+    @Autowired ReservationProcedureCaller reservationCaller;
+    @Autowired SlotProcedureCaller slotCaller;
+    @Autowired StatsProcedureCaller statsCaller;
     @Autowired JdbcTemplate jdbc;
 
     private long cafeId;
@@ -89,7 +89,7 @@ class ProcedureDaoContractTest {
     @DisplayName("SP_CREATE_RESERVATION: 성공하면 0과 예약번호, 행은 '예약완료'")
     void createReservation_success() {
         LocalDateTime start = tomorrowAt(10, 0);
-        CreateReservationResult r = call(() -> reservationDao.createReservation(USER, seatId, start, start.plusHours(2), 2));
+        CreateReservationResult r = call(() -> reservationCaller.createReservation(USER, seatId, start, start.plusHours(2), 2));
 
         assertThat(r.resultCode()).isZero();
         assertThat(r.reservationId()).isNotNull();
@@ -103,20 +103,20 @@ class ProcedureDaoContractTest {
     @DisplayName("SP_CREATE_RESERVATION: 실패하면 예약번호 null 과 오류 코드")
     void createReservation_failures() {
         LocalDateTime start = tomorrowAt(10, 0);
-        assertThat(call(() -> reservationDao.createReservation(USER, seatId, start, start.plusHours(2), 2)).resultCode()).isZero();
+        assertThat(call(() -> reservationCaller.createReservation(USER, seatId, start, start.plusHours(2), 2)).resultCode()).isZero();
 
-        CreateReservationResult conflict = call(() -> reservationDao.createReservation(OTHER_USER, seatId, start.plusHours(1), start.plusHours(2), 1));
+        CreateReservationResult conflict = call(() -> reservationCaller.createReservation(OTHER_USER, seatId, start.plusHours(1), start.plusHours(2), 1));
         assertThat(conflict.resultCode()).isEqualTo(-20004);
         assertThat(conflict.reservationId()).isNull();
 
-        assertThat(call(() -> reservationDao.createReservation(OTHER_USER, seatId, start.plusHours(3), start.plusHours(4), 3)).resultCode())
+        assertThat(call(() -> reservationCaller.createReservation(OTHER_USER, seatId, start.plusHours(3), start.plusHours(4), 3)).resultCode())
                 .isEqualTo(-20003);   // 정원 초과
-        assertThat(call(() -> reservationDao.createReservation(OTHER_USER, seatOff, start, start.plusHours(1), 1)).resultCode())
+        assertThat(call(() -> reservationCaller.createReservation(OTHER_USER, seatOff, start, start.plusHours(1), 1)).resultCode())
                 .isEqualTo(-20009);   // 사용중지
-        assertThat(call(() -> reservationDao.createReservation(OTHER_USER, seatId, tomorrowAt(7, 0), tomorrowAt(8, 0), 1)).resultCode())
+        assertThat(call(() -> reservationCaller.createReservation(OTHER_USER, seatId, tomorrowAt(7, 0), tomorrowAt(8, 0), 1)).resultCode())
                 .isEqualTo(-20001);   // 영업시간 밖
         LocalDateTime far = tomorrowAt(10, 0).plusDays(10);
-        assertThat(call(() -> reservationDao.createReservation(OTHER_USER, seatId, far, far.plusHours(1), 1)).resultCode())
+        assertThat(call(() -> reservationCaller.createReservation(OTHER_USER, seatId, far, far.plusHours(1), 1)).resultCode())
                 .isEqualTo(-20002);   // 7일 밖
     }
 
@@ -126,12 +126,12 @@ class ProcedureDaoContractTest {
     @DisplayName("SP_CANCEL_RESERVATION: 본인 아니면 -20008, 본인이면 0 → '예약취소'")
     void cancelReservation() {
         LocalDateTime start = tomorrowAt(14, 0);
-        long id = call(() -> reservationDao.createReservation(USER, seatId, start, start.plusHours(1), 1)).reservationId();
+        long id = call(() -> reservationCaller.createReservation(USER, seatId, start, start.plusHours(1), 1)).reservationId();
 
-        assertThat(call(() -> reservationDao.cancelReservation(id, OTHER_USER))).isEqualTo(-20008);
-        assertThat(call(() -> reservationDao.cancelReservation(id, USER))).isZero();
+        assertThat(call(() -> reservationCaller.cancelReservation(id, OTHER_USER))).isEqualTo(-20008);
+        assertThat(call(() -> reservationCaller.cancelReservation(id, USER))).isZero();
         assertThat(statusOf(id)).isEqualTo("예약취소");
-        assertThat(call(() -> reservationDao.cancelReservation(id, USER))).isEqualTo(-20007);   // 이미 취소됨
+        assertThat(call(() -> reservationCaller.cancelReservation(id, USER))).isEqualTo(-20007);   // 이미 취소됨
     }
 
     /* ------------------------------ SP_CHECK_IN / SP_CHECK_OUT ------------------------------ */
@@ -141,13 +141,13 @@ class ProcedureDaoContractTest {
     void checkInAndOut() {
         long id = directReservation(5.0 / 60, 1);   // 5분 뒤 입실 → 체크인 가능 시간
 
-        assertThat(call(() -> reservationDao.checkOut(id, USER))).isEqualTo(-20007);   // 아직 이용중 아님
-        assertThat(call(() -> reservationDao.checkIn(id, OTHER_USER))).isEqualTo(-20008);
-        assertThat(call(() -> reservationDao.checkIn(id, USER))).isZero();
+        assertThat(call(() -> reservationCaller.checkOut(id, USER))).isEqualTo(-20007);   // 아직 이용중 아님
+        assertThat(call(() -> reservationCaller.checkIn(id, OTHER_USER))).isEqualTo(-20008);
+        assertThat(call(() -> reservationCaller.checkIn(id, USER))).isZero();
         assertThat(statusOf(id)).isEqualTo("이용중");
         assertThat(seatStatus()).isEqualTo("이용중");   // TRG_RESV_SEAT_SYNC
 
-        assertThat(call(() -> reservationDao.checkOut(id, USER))).isZero();
+        assertThat(call(() -> reservationCaller.checkOut(id, USER))).isZero();
         assertThat(statusOf(id)).isEqualTo("이용완료");
         assertThat(seatStatus()).isEqualTo("빈자리");
         assertThat(jdbc.queryForObject("SELECT COUNT(*) FROM RESERVATION WHERE RESERVATION_ID = ? AND ACTUAL_IN IS NOT NULL AND ACTUAL_OUT IS NOT NULL",
@@ -158,7 +158,7 @@ class ProcedureDaoContractTest {
     @DisplayName("SP_CHECK_IN: 입실 10분 전~15분 후 밖이면 -20006")
     void checkIn_outsideWindow() {
         long id = directReservation(3, 1);   // 3시간 뒤 입실
-        assertThat(call(() -> reservationDao.checkIn(id, USER))).isEqualTo(-20006);
+        assertThat(call(() -> reservationCaller.checkIn(id, USER))).isEqualTo(-20006);
     }
 
     /* ------------------------------ SP_GET_AVAILABLE_SLOTS ------------------------------ */
@@ -167,9 +167,9 @@ class ProcedureDaoContractTest {
     @DisplayName("SP_GET_AVAILABLE_SLOTS: 예약된 시간대는 available=false, 사용중지 좌석은 빠진다")
     void availableSlots() {
         LocalDateTime start = tomorrowAt(10, 0);
-        assertThat(call(() -> reservationDao.createReservation(USER, seatId, start, start.plusHours(1), 1)).resultCode()).isZero();
+        assertThat(call(() -> reservationCaller.createReservation(USER, seatId, start, start.plusHours(1), 1)).resultCode()).isZero();
 
-        List<SlotRow> rows = call(() -> slotDao.getAvailableSlots(cafeId, start.toLocalDate(), 1));
+        List<SlotRow> rows = call(() -> slotCaller.getAvailableSlots(cafeId, start.toLocalDate(), 1));
 
         assertThat(rows).isNotEmpty().allMatch(r -> r.seatId() == seatId);   // seatOff 제외
         assertThat(rows).filteredOn(r -> r.slotStart().equals(start)).singleElement()
@@ -183,7 +183,7 @@ class ProcedureDaoContractTest {
     @Test
     @DisplayName("SP_GET_AVAILABLE_SLOTS: 정원보다 인원이 많으면 해당 좌석은 나오지 않는다")
     void availableSlots_capacity() {
-        List<SlotRow> rows = call(() -> slotDao.getAvailableSlots(cafeId, tomorrowAt(0, 0).toLocalDate(), 3));
+        List<SlotRow> rows = call(() -> slotCaller.getAvailableSlots(cafeId, tomorrowAt(0, 0).toLocalDate(), 3));
         assertThat(rows).isEmpty();
     }
 
@@ -196,7 +196,7 @@ class ProcedureDaoContractTest {
         withDmlAllowed("UPDATE RESERVATION SET STATUS = '노쇼' WHERE RESERVATION_ID = " + id);
         LocalDate today = jdbc.queryForObject("SELECT TRUNC(SYSDATE) FROM DUAL", java.sql.Date.class).toLocalDate();
 
-        List<ZoneStatRow> rows = call(() -> statsDao.getZoneStats(cafeId,
+        List<ZoneStatRow> rows = call(() -> statsCaller.getZoneStats(cafeId,
                 today.minusDays(6).atStartOfDay(), today.plusDays(1).atStartOfDay()));
 
         assertThat(rows).singleElement().satisfies(z -> {

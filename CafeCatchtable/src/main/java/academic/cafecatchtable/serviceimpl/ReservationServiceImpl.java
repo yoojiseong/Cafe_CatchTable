@@ -8,7 +8,7 @@ import academic.cafecatchtable.common.ErrorCode;
 import academic.cafecatchtable.common.Status;
 import academic.cafecatchtable.dto.ReservationDto.*;
 import academic.cafecatchtable.jdbc.CreateReservationResult;
-import academic.cafecatchtable.jdbc.ReservationProcedureDao;
+import academic.cafecatchtable.jdbc.ReservationProcedureCaller;
 import academic.cafecatchtable.repository.ReservationRepository;
 import academic.cafecatchtable.repository.SeatRepository;
 import org.springframework.stereotype.Service;
@@ -21,7 +21,7 @@ import java.util.List;
 /**
  * 예약·이용 (FR-12 ~ FR-17, FR-19 / R-01 ~ R-06)
  *
- * 변경(생성·취소·체크인·퇴실)은 ReservationProcedureDao 의 저장프로시저로만 한다.
+ * 변경(생성·취소·체크인·퇴실)은 ReservationProcedureCaller 의 저장프로시저로만 한다.
  * 프로시저가 COMMIT/ROLLBACK 을 직접 하므로 변경 메서드에는 @Transactional 을 걸지 않는다.
  * 프로시저가 돌려준 p_result_code 는 ApiException.throwIfFailed() 로 HTTP 오류로 바꾼다.
  */
@@ -33,14 +33,14 @@ public class ReservationServiceImpl implements ReservationService {
 
     private final ReservationRepository reservationRepository;
     private final SeatRepository seatRepository;
-    private final ReservationProcedureDao procedureDao;
+    private final ReservationProcedureCaller procedureCaller;
     private final DbClock clock;
 
     public ReservationServiceImpl(ReservationRepository reservationRepository, SeatRepository seatRepository,
-                              ReservationProcedureDao procedureDao, DbClock clock) {
+                              ReservationProcedureCaller procedureCaller, DbClock clock) {
         this.reservationRepository = reservationRepository;
         this.seatRepository = seatRepository;
-        this.procedureDao = procedureDao;
+        this.procedureCaller = procedureCaller;
         this.clock = clock;
     }
 
@@ -56,7 +56,7 @@ public class ReservationServiceImpl implements ReservationService {
         LocalDateTime startDt = req.startDt().withSecond(0).withNano(0);
         LocalDateTime endDt = startDt.plusMinutes(req.stayMinutes());   // 서버가 endDt 계산 (API 명세 R-01)
 
-        CreateReservationResult result = procedureDao.createReservation(
+        CreateReservationResult result = procedureCaller.createReservation(
                 memberId, req.seatId(), startDt, endDt, req.visitorCount());
         ApiException.throwIfFailed(result.resultCode());
         if (result.reservationId() == null) {
@@ -101,7 +101,7 @@ public class ReservationServiceImpl implements ReservationService {
     @Override
     public StatusResponse cancel(String memberId, Long reservationId) {
         ensureExists(reservationId);
-        ApiException.throwIfFailed(procedureDao.cancelReservation(reservationId, memberId));
+        ApiException.throwIfFailed(procedureCaller.cancelReservation(reservationId, memberId));
         return statusOf(reservationId);
     }
 
@@ -109,7 +109,7 @@ public class ReservationServiceImpl implements ReservationService {
     @Override
     public StatusResponse checkIn(String memberId, Long reservationId) {
         ensureExists(reservationId);
-        ApiException.throwIfFailed(procedureDao.checkIn(reservationId, memberId));
+        ApiException.throwIfFailed(procedureCaller.checkIn(reservationId, memberId));
         return statusOf(reservationId);
     }
 
@@ -117,7 +117,7 @@ public class ReservationServiceImpl implements ReservationService {
     @Override
     public StatusResponse checkOut(String memberId, Long reservationId) {
         ensureExists(reservationId);
-        ApiException.throwIfFailed(procedureDao.checkOut(reservationId, memberId));
+        ApiException.throwIfFailed(procedureCaller.checkOut(reservationId, memberId));
         return statusOf(reservationId);
     }
 

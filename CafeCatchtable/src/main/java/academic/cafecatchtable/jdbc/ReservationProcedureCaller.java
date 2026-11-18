@@ -3,6 +3,11 @@ package academic.cafecatchtable.jdbc;
 import org.springframework.stereotype.Repository;
 
 import javax.sql.DataSource;
+import java.sql.CallableStatement;
+import java.sql.Connection;
+import java.sql.SQLException;
+import java.sql.Timestamp;
+import java.sql.Types;
 import java.time.LocalDateTime;
 
 /**
@@ -26,15 +31,16 @@ import java.time.LocalDateTime;
  *
  * DB-P5 SP_EXPIRE_NOSHOW 는 DBMS_SCHEDULER Job JOB_EXPIRE_NOSHOW(5분 간격)가 실행하므로 앱에서 호출하지 않는다 (FR-18).
  *
- * 아래 메서드는 아직 구현 전이라 UnsupportedOperationException 을 던진다 → API 는 501 NOT_IMPLEMENTED 응답.
+ * 구현: createReservation. 나머지(취소·체크인·퇴실)는 아직 UnsupportedOperationException 을 던진다
+ * → API 는 501 NOT_IMPLEMENTED 응답. createReservation 과 같은 방식으로 작성하면 된다.
  */
 @Repository
-public class ReservationProcedureDao {
+public class ReservationProcedureCaller {
 
     /** Spring 이 application.properties 의 Oracle 설정으로 만든 커넥션 풀. dataSource.getConnection() 으로 사용 */
     private final DataSource dataSource;
 
-    public ReservationProcedureDao(DataSource dataSource) {
+    public ReservationProcedureCaller(DataSource dataSource) {
         this.dataSource = dataSource;
     }
 
@@ -60,8 +66,29 @@ public class ReservationProcedureDao {
     public CreateReservationResult createReservation(String memberId, Long seatId,
                                                      LocalDateTime startDt, LocalDateTime endDt,
                                                      int visitorCount) {
-        // 순수 JDBC 호출은 CreateReservationResult.createReservation() 에 구현되어 있다
-        return CreateReservationResult.createReservation(memberId, seatId, startDt, endDt, visitorCount);
+        String sql = "{call SP_CREATE_RESERVATION(?, ?, ?, ?, ?, ?, ?)}";
+        try (Connection con = dataSource.getConnection();
+             CallableStatement cstmt = con.prepareCall(sql)) {
+
+            cstmt.setString(1, memberId);
+            cstmt.setLong(2, seatId);
+            cstmt.setTimestamp(3, Timestamp.valueOf(startDt));
+            cstmt.setTimestamp(4, Timestamp.valueOf(endDt));
+            cstmt.setInt(5, visitorCount);
+            cstmt.registerOutParameter(6, Types.NUMERIC);
+            cstmt.registerOutParameter(7, Types.INTEGER);
+
+            cstmt.execute();
+
+            long id = cstmt.getLong(6);
+            Long reservationId = cstmt.wasNull() ? null : id;   // 실패하면 NULL
+            int resultCode = cstmt.getInt(7);
+            return new CreateReservationResult(reservationId, resultCode);
+
+        } catch (SQLException e) {
+            // 규칙 위반은 프로시저가 p_result_code 로 돌려주므로, 여기로 오는 건 접속 오류 등이다 → 500
+            throw new RuntimeException("SP_CREATE_RESERVATION 호출 실패", e);
+        }
     }
 
     /**
